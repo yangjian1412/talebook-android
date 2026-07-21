@@ -3,6 +3,7 @@ package com.talebook.app.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,13 +29,13 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,9 +57,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -67,22 +71,26 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.talebook.app.reader.ReadiumHostFragment
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.ReaderFontFamily
-import com.talebook.app.reader.ReaderPageAnimation
-import com.talebook.app.reader.ReaderPageTurnMode
 import com.talebook.app.reader.ReaderTheme
 import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.ui.theme.ReaderThemePalette
+import com.talebook.app.ui.theme.ThemePresets
+import com.talebook.app.ui.theme.toColor
 import com.talebook.app.viewmodel.LocalReaderViewModel
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.View
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocalReaderScreen(
     bookId: Int,
+    initialLocatorJson: String? = null,
     onBack: () -> Unit,
     viewModel: LocalReaderViewModel = viewModel()
 ) {
@@ -90,7 +98,12 @@ fun LocalReaderScreen(
     val uiState by viewModel.uiState.collectAsState()
     val settingsRepository = remember(context.applicationContext) { SettingsRepository(context.applicationContext) }
     val appThemeMode by settingsRepository.themeMode.collectAsState(initial = SettingsRepository.THEME_AUTO)
+    val dayPreset by settingsRepository.dayThemePreset.collectAsState(initial = ThemePresets.DAY_WHITE)
+    val nightPreset by settingsRepository.nightThemePreset.collectAsState(initial = ThemePresets.NIGHT_CHARCOAL)
+    val customBackground by settingsRepository.dayCustomBackground.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.background)
+    val customText by settingsRepository.dayCustomText.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text)
     val systemDark = isSystemInDarkTheme()
+    val scope = rememberCoroutineScope()
     var barsVisible by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var showBookmarksDialog by remember { mutableStateOf(false) }
@@ -102,12 +115,50 @@ fun LocalReaderScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
+    var showCustomThemeDialog by remember { mutableStateOf(false) }
+    var previewBackground by remember(customBackground) { mutableStateOf(customBackground) }
+    var previewText by remember(customText) { mutableStateOf(customText) }
     var showProgressJumpDialog by remember { mutableStateOf(false) }
     var progressJumpText by remember { mutableStateOf("") }
     var pageJumpText by remember { mutableStateOf("") }
     var progression by remember { mutableStateOf(0.0) }
     var locatorBeforeChrome by remember { mutableStateOf<String?>(null) }
+    var initialLocatorConsumed by remember(bookId, initialLocatorJson) { mutableStateOf(false) }
     val readerSettings = uiState.readerSettings
+    val effectiveDark = ThemePresets.isDark(appThemeMode, systemDark)
+    val selectedReaderPalette = if (effectiveDark) {
+        ThemePresets.night.firstOrNull { it.id == nightPreset } ?: ThemePresets.night.first()
+    } else {
+        val base = ThemePresets.day.firstOrNull { it.id == dayPreset } ?: ThemePresets.day.first()
+        if (base.id == ThemePresets.DAY_CUSTOM) base.copy(background = customBackground, text = customText) else base
+    }
+    fun readerPaletteForDark(dark: Boolean): ReaderThemePalette {
+        return if (dark) {
+            ThemePresets.night.firstOrNull { it.id == nightPreset } ?: ThemePresets.night.first()
+        } else {
+            val base = ThemePresets.day.firstOrNull { it.id == dayPreset } ?: ThemePresets.day.first()
+            if (base.id == ThemePresets.DAY_CUSTOM) base.copy(background = customBackground, text = customText) else base
+        }
+    }
+    fun applyReaderPalette(palette: ReaderThemePalette, dark: Boolean = effectiveDark) {
+        viewModel.updateReaderSettings(
+            fontScale = readerSettings.fontScale,
+            lineHeight = readerSettings.lineHeight,
+            brightness = readerSettings.brightness,
+            scrollMode = readerSettings.scrollMode,
+            useSystemBrightness = readerSettings.useSystemBrightness,
+            theme = if (dark) ReaderTheme.DARK else ReaderTheme.CUSTOM,
+            tapPageTurn = readerSettings.tapPageTurn,
+            readerBackgroundColor = palette.background,
+            readerTextColor = palette.text,
+            customThemeEnabled = true,
+            appDark = dark
+        )
+    }
+
+    LaunchedEffect(uiState.sessionId, appThemeMode, systemDark, dayPreset, nightPreset, customBackground, customText) {
+        if (uiState.sessionId != null) applyReaderPalette(selectedReaderPalette)
+    }
     val activity = context.findFragmentActivity()
     val leaveReader = remember(activity, onBack) {
         {
@@ -124,14 +175,17 @@ fun LocalReaderScreen(
         viewModel.load(context.applicationContext, bookId)
     }
 
-    LaunchedEffect(appThemeMode, systemDark, uiState.sessionId) {
-        if (uiState.sessionId == null) return@LaunchedEffect
-        val appDark = when (appThemeMode) {
-            SettingsRepository.THEME_LIGHT -> false
-            SettingsRepository.THEME_DARK -> true
-            else -> systemDark
+    LaunchedEffect(uiState.sessionId, initialLocatorJson) {
+        val sessionId = uiState.sessionId ?: return@LaunchedEffect
+        val locator = initialLocatorJson ?: return@LaunchedEffect
+        if (!initialLocatorConsumed && locator.isNotBlank()) {
+            initialLocatorConsumed = true
+            ReadiumUiEvents.emitGoToLocator(sessionId, locator)
         }
-        viewModel.updateAppDark(appDark)
+    }
+
+    LaunchedEffect(uiState.sessionId, dayPreset, nightPreset, customBackground, customText) {
+        // Reserved: palette is applied via dedicated flows; placeholder to avoid extra triggers when appThemeMode changes.
     }
 
     LaunchedEffect(uiState.sessionId) {
@@ -171,9 +225,12 @@ fun LocalReaderScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val currentReaderBackgroundLong = readerSettings.readerBackgroundColor.takeIf { it != 0x00000000L } ?: selectedReaderPalette.background
+    val currentReaderBackground = currentReaderBackgroundLong.toColor()
+
+    Box(modifier = Modifier.fillMaxSize().background(currentReaderBackground)) {
         Box(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().background(currentReaderBackground)
         ) {
             when {
                 uiState.isLoading -> {
@@ -209,6 +266,7 @@ fun LocalReaderScreen(
                             AndroidView(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .background(currentReaderBackground)
                                     .padding(
                                         PaddingValues(
                                             top = if (barsVisible) 64.dp else 0.dp,
@@ -216,9 +274,21 @@ fun LocalReaderScreen(
                                         )
                                     ),
                                 factory = { ctx ->
-                                    FrameLayout(ctx).apply { id = containerId }
+                                    FrameLayout(ctx).apply {
+                                        id = containerId
+                                        setBackgroundColor(android.graphics.Color.rgb(
+                                            ((currentReaderBackgroundLong shr 16) and 0xFF).toInt(),
+                                            ((currentReaderBackgroundLong shr 8) and 0xFF).toInt(),
+                                            (currentReaderBackgroundLong and 0xFF).toInt()
+                                        ))
+                                    }
                                 },
                                 update = {
+                                    it.setBackgroundColor(android.graphics.Color.rgb(
+                                        ((currentReaderBackgroundLong shr 16) and 0xFF).toInt(),
+                                        ((currentReaderBackgroundLong shr 8) and 0xFF).toInt(),
+                                        (currentReaderBackgroundLong and 0xFF).toInt()
+                                    ))
                                     val tag = ReadiumHostFragment.tag(uiState.sessionId!!)
                                     if (activity.supportFragmentManager.findFragmentByTag(tag) == null) {
                                         activity.supportFragmentManager.beginTransaction()
@@ -272,9 +342,17 @@ fun LocalReaderScreen(
             if (barsVisible && uiState.sessionId != null) {
                 ReaderBottomBar(
                     progression = progression,
-                    theme = readerSettings.theme,
+                    darkMode = effectiveDark,
                     onToc = { showTocDialog = true },
-                    onTheme = { viewModel.cycleReaderTheme() },
+                    onToggleTheme = {
+                        val targetDark = !effectiveDark
+                        applyReaderPalette(readerPaletteForDark(targetDark), targetDark)
+                        scope.launch {
+                            settingsRepository.saveThemeMode(
+                                if (targetDark) SettingsRepository.THEME_DARK else SettingsRepository.THEME_LIGHT
+                            )
+                        }
+                    },
                     onSettings = { showSettingsDialog = true },
                     onNote = { showNotesDialog = true },
                     onTts = { viewModel.startTts() },
@@ -653,6 +731,53 @@ fun LocalReaderScreen(
                             valueRange = 0.3f..1.0f
                         )
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("明暗模式")
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                        ReaderOptionChip("跟随", appThemeMode == SettingsRepository.THEME_AUTO) {
+                            val targetDark = ThemePresets.isDark(SettingsRepository.THEME_AUTO, systemDark)
+                            applyReaderPalette(readerPaletteForDark(targetDark), targetDark)
+                            scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_AUTO) }
+                        }
+                        ReaderOptionChip("白天", appThemeMode == SettingsRepository.THEME_LIGHT) {
+                            applyReaderPalette(readerPaletteForDark(false), false)
+                            scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_LIGHT) }
+                        }
+                        ReaderOptionChip("黑夜", appThemeMode == SettingsRepository.THEME_DARK) {
+                            applyReaderPalette(readerPaletteForDark(true), true)
+                            scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_DARK) }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(if (effectiveDark) "阅读背景（夜间）" else "阅读背景（白天）")
+                    ReaderThemePresetPicker(
+                        presets = if (effectiveDark) ThemePresets.night else ThemePresets.day,
+                        selected = if (effectiveDark) nightPreset else dayPreset,
+                        onSelect = { preset ->
+                            val palette = if (effectiveDark) {
+                                ThemePresets.night.first { it.id == preset }
+                            } else {
+                                ThemePresets.day.first { it.id == preset }.let { base ->
+                                    if (base.id == ThemePresets.DAY_CUSTOM) {
+                                        base.copy(background = customBackground, text = customText)
+                                    } else {
+                                        base
+                                    }
+                                }
+                            }
+                            applyReaderPalette(palette)
+                            scope.launch {
+                                if (effectiveDark) {
+                                    settingsRepository.saveNightThemePreset(preset)
+                                } else if (preset == ThemePresets.DAY_CUSTOM) {
+                                    settingsRepository.saveDayCustomColors(customBackground, customText)
+                                    showCustomThemeDialog = true
+                                } else {
+                                    settingsRepository.saveDayThemePreset(preset)
+                                }
+                            }
+                        }
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -679,18 +804,68 @@ fun LocalReaderScreen(
                             }
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("主题")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        ReaderThemeChip("跟随", readerSettings.theme == ReaderTheme.SYSTEM) { viewModel.updateReaderTheme(ReaderTheme.SYSTEM) }
-                        ReaderThemeChip("白色", readerSettings.theme == ReaderTheme.LIGHT) { viewModel.updateReaderTheme(ReaderTheme.LIGHT) }
-                        ReaderThemeChip("护眼", readerSettings.theme == ReaderTheme.SEPIA) { viewModel.updateReaderTheme(ReaderTheme.SEPIA) }
-                        ReaderThemeChip("夜间", readerSettings.theme == ReaderTheme.DARK) { viewModel.updateReaderTheme(ReaderTheme.DARK) }
-                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showSettingsDialog = false }) { Text("完成") }
+            }
+        )
+    }
+
+    if (showCustomThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomThemeDialog = false },
+            title = { Text("自定义阅读背景") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(previewBackground.toColor())
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text("样例正文 ABC", color = previewText.toColor(), style = MaterialTheme.typography.bodyLarge)
+                    }
+                    Text("背景颜色")
+                    CompactSlider(
+                        value = previewBackground.lightHueValue(),
+                        onValueChange = { value ->
+                            val bg = lightColorFromSlider(value)
+                            previewBackground = bg
+                            val palette = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.copy(background = bg, text = previewText)
+                            applyReaderPalette(palette)
+                        },
+                        valueRange = 0f..1f
+                    )
+                    Text("文字颜色")
+                    CompactSlider(
+                        value = previewText.darkHueValue(),
+                        onValueChange = { value ->
+                            val fg = darkColorFromSlider(value)
+                            previewText = fg
+                            val palette = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.copy(background = previewBackground, text = fg)
+                            applyReaderPalette(palette)
+                        },
+                        valueRange = 0f..1f
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            previewText = 0xFF000000L
+                            val palette = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.copy(background = previewBackground, text = 0xFF000000L)
+                            applyReaderPalette(palette)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("使用纯黑色文字") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { settingsRepository.saveDayCustomColors(previewBackground, previewText) }
+                    showCustomThemeDialog = false
+                }) { Text("完成") }
             }
         )
     }
@@ -726,20 +901,29 @@ fun LocalReaderScreen(
                         ReaderOptionChip("无衬线", readerSettings.fontFamily == ReaderFontFamily.SANS_SERIF) {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SANS_SERIF)
                         }
+                        ReaderOptionChip("等宽", readerSettings.fontFamily == ReaderFontFamily.MONOSPACE) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.MONOSPACE)
+                        }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("音量键翻页")
-                        CompactSwitch(
-                            checked = readerSettings.volumeKeyPageTurn,
-                            onCheckedChange = {
-                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, volumeKeyPageTurn = it)
+                        Text("字间距 ${String.format(java.util.Locale.US, "%.1f", readerSettings.letterSpacing)}")
+                        TextButton(
+                            onClick = {
+                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, letterSpacing = 0f)
                             }
-                        )
+                        ) { Text("默认") }
                     }
+                    CompactSlider(
+                        value = readerSettings.letterSpacing,
+                        onValueChange = {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, letterSpacing = it)
+                        },
+                        valueRange = 0f..6f
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -759,6 +943,19 @@ fun LocalReaderScreen(
                         },
                         valueRange = 0.0f..2.0f
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("音量键翻页")
+                        CompactSwitch(
+                            checked = readerSettings.volumeKeyPageTurn,
+                            onCheckedChange = {
+                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, volumeKeyPageTurn = it)
+                            }
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -798,8 +995,22 @@ fun LocalReaderScreen(
                             }
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("强制使用出版社字体")
+                        CompactSwitch(
+                            checked = readerSettings.forcePublisherFonts,
+                            onCheckedChange = {
+                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, forcePublisherFonts = it)
+                            }
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("出版社样式指 EPUB 自带排版 CSS。关闭后 App 设置会更强地覆盖书籍原排版。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("强制使用出版社字体默认关闭。开启后会强制加载 EPUB 内嵌字体，可能造成部分图书无法在线阅读。遇到问题可缓存本地或关闭此选项。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {
@@ -807,6 +1018,8 @@ fun LocalReaderScreen(
             }
         )
     }
+
+    
 
     if (showTocDialog) {
         AlertDialog(
@@ -1028,9 +1241,9 @@ private fun FloatingTtsBar(
 @Composable
 private fun ReaderBottomBar(
     progression: Double,
-    theme: ReaderTheme,
+    darkMode: Boolean,
     onToc: () -> Unit,
-    onTheme: () -> Unit,
+    onToggleTheme: () -> Unit,
     onSettings: () -> Unit,
     onNote: () -> Unit,
     onTts: () -> Unit,
@@ -1050,8 +1263,8 @@ private fun ReaderBottomBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onToc) { Icon(Icons.Default.MenuBook, contentDescription = "目录") }
-            IconButton(onClick = onTheme) {
-                Icon(if (theme == ReaderTheme.DARK) Icons.Default.LightMode else Icons.Default.DarkMode, contentDescription = "主题")
+            IconButton(onClick = onToggleTheme) {
+                Icon(if (darkMode) Icons.Default.LightMode else Icons.Default.DarkMode, contentDescription = "切换明暗")
             }
             IconButton(onClick = onSettings) { Icon(Icons.Default.Tune, contentDescription = "阅读设置") }
             IconButton(onClick = onNote) { Icon(Icons.Default.Edit, contentDescription = "笔记") }
@@ -1061,21 +1274,55 @@ private fun ReaderBottomBar(
 }
 
 @Composable
-private fun ReaderThemeChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label) }
-    )
-}
-
-@Composable
 private fun ReaderOptionChip(label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(
         selected = selected,
         onClick = onClick,
-        label = { Text(label) }
+        label = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
     )
+}
+
+@Composable
+private fun ReaderThemePresetPicker(
+    presets: List<ReaderThemePalette>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        presets.forEach { preset ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(if (preset.id == selected) 40.dp else 34.dp)
+                        .clip(CircleShape)
+                        .background(preset.background.toColor())
+                        .clickable { onSelect(preset.id) }
+                        .padding(4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(preset.text.toColor())
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = preset.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (preset.id == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1155,4 +1402,24 @@ private fun FragmentActivity.showSystemBarsAfterReader() {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
     }
+}
+
+private fun lightColorFromSlider(value: Float): Long = hsvToRgb(value.coerceIn(0f, 1f) * 360f, 0.16f, 0.98f)
+
+private fun darkColorFromSlider(value: Float): Long = hsvToRgb(value.coerceIn(0f, 1f) * 360f, 0.45f, 0.42f)
+
+private fun Long.lightHueValue(): Float = hueValue(default = 42f)
+
+private fun Long.darkHueValue(): Float = hueValue(default = 220f)
+
+private fun Long.hueValue(default: Float): Float {
+    if (this == 0L) return default / 360f
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV((0xFF000000 or (this and 0xFFFFFF)).toInt(), hsv)
+    return (hsv[0] / 360f).coerceIn(0f, 1f)
+}
+
+private fun hsvToRgb(hue: Float, saturation: Float, value: Float): Long {
+    val color = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value))
+    return (color and 0xFFFFFF).toLong()
 }

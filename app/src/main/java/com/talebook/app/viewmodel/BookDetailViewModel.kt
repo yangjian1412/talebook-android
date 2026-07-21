@@ -9,9 +9,15 @@ import com.talebook.app.data.repository.BookRepository
 import com.talebook.app.data.repository.DownloadEvent
 import com.talebook.app.data.repository.DownloadRepository
 import com.talebook.app.data.repository.ReaderCacheInfo
+import com.talebook.app.data.repository.CacheJobTracker
+import com.talebook.app.data.repository.ReaderCacheEvent
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.local.ReaderDatabase
+import com.talebook.app.data.repository.SettingsRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +36,10 @@ data class BookDetailUiState(
     val localProgression: Double = 0.0,
     val cacheInfo: ReaderCacheInfo = ReaderCacheInfo(isCached = false),
     val cacheBusy: Boolean = false,
-    val cacheMessage: String = ""
+    val cacheMessage: String = "",
+    val cacheProgressBytes: Long = 0L,
+    val cacheTotalBytes: Long = 0L,
+    val cacheCurrentAction: String = ""
 )
 
 sealed interface DownloadState {
@@ -48,6 +57,7 @@ class BookDetailViewModel : ViewModel() {
     val uiState: StateFlow<BookDetailUiState> = _uiState.asStateFlow()
 
     private var downloadJob: Job? = null
+    private var cacheJob: Job? = null
 
     fun loadBook(bookId: Int) {
         viewModelScope.launch {
@@ -68,8 +78,9 @@ class BookDetailViewModel : ViewModel() {
     fun loadLocalReaderInfo(context: Context, bookId: Int) {
         viewModelScope.launch {
             val appCtx = context.applicationContext
+            val serverId = SettingsRepository(appCtx).activeLibraryServerId.first()
             val dao = ReaderDatabase.get(appCtx).readerDao()
-            val progress = dao.getProgress(bookId)?.progression ?: 0.0
+            val progress = dao.getProgress(serverId, bookId)?.progression ?: 0.0
             val cacheInfo = readerCacheRepository.cacheInfo(appCtx, bookId)
             _uiState.update {
                 it.copy(localProgression = progress, cacheInfo = cacheInfo, cacheMessage = "")
@@ -93,6 +104,94 @@ class BookDetailViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    fun startLocalCache(context: Context) {
+        val book = _uiState.value.book ?: return
+        if (_uiState.value.cacheBusy) return
+        cacheJob?.cancel()
+        cacheJob = viewModelScope.launch {
+            val appCtx = context.applicationContext
+            CacheJobTracker.enqueue(book.id, book.title, kotlinx.coroutines.currentCoroutineContext().job)
+            _uiState.update {
+                it.copy(
+                    cacheBusy = true,
+                    cacheMessage = "已加入缓存队列...",
+                    cacheCurrentAction = "等待中",
+                    cacheProgressBytes = 0L,
+                    cacheTotalBytes = 0L
+                )
+            }
+            try {
+                CacheJobTracker.acquireSlot(book.id)
+                _uiState.update {
+                    it.copy(
+                        cacheMessage = "正在缓存...",
+                        cacheCurrentAction = "缓存中"
+                    )
+                }
+                readerCacheRepository.cacheBookAsFlow(appCtx, book).collect { event ->
+                    when (event) {
+                        is ReaderCacheEvent.Started -> {
+                            CacheJobTracker.updateProgress(book.id, 0L, event.totalBytes)
+                            _uiState.update {
+                                it.copy(cacheTotalBytes = event.totalBytes, cacheCurrentAction = "缓存中")
+                            }
+                        }
+                        is ReaderCacheEvent.Progress -> {
+                            CacheJobTracker.updateProgress(book.id, event.downloadedBytes, event.totalBytes)
+                            _uiState.update {
+                                it.copy(
+                                    cacheProgressBytes = event.downloadedBytes,
+                                    cacheTotalBytes = event.totalBytes,
+                                    cacheCurrentAction = "缓存中"
+                                )
+                            }
+                        }
+                        is ReaderCacheEvent.Done -> {
+                            CacheJobTracker.finish(book.id)
+                            val cacheInfo = readerCacheRepository.cacheInfo(appCtx, book.id)
+                            _uiState.update {
+                                it.copy(
+                                    cacheBusy = false,
+                                    cacheInfo = cacheInfo,
+                                    cacheProgressBytes = event.result.sizeBytes,
+                                    cacheTotalBytes = event.result.sizeBytes,
+                                    cacheCurrentAction = "已完成",
+                                    cacheMessage = "已缓存 ${(event.result.sizeBytes / 1024.0 / 1024.0).formatMb()} MB"
+                                )
+                            }
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                CacheJobTracker.finish(book.id)
+                _uiState.update {
+                    it.copy(
+                        cacheBusy = false,
+                        cacheCurrentAction = "已取消",
+                        cacheMessage = "缓存已取消"
+                    )
+                }
+                throw e
+            } catch (e: Exception) {
+                CacheJobTracker.finish(book.id)
+                _uiState.update {
+                    it.copy(
+                        cacheBusy = false,
+                        cacheCurrentAction = "失败",
+                        cacheMessage = e.message ?: "缓存失败"
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelLocalCache() {
+        val bookId = _uiState.value.book?.id ?: return
+        CacheJobTracker.cancel(bookId)
+        cacheJob?.cancel()
+        cacheJob = null
     }
 
     private suspend fun loadReadState(bookId: Int) {

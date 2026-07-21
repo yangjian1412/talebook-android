@@ -15,8 +15,11 @@ import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.local.ReaderBookmarkEntity
 import com.talebook.app.data.local.ReaderDatabase
 import com.talebook.app.data.local.ReadingProgressEntity
+import com.talebook.app.data.repository.SettingsRepository
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
@@ -73,6 +76,13 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         savedInstanceState: Bundle?
     ): View = FrameLayout(requireContext()).apply {
         id = containerId
+        ReadiumSessionStore.get(sessionId)?.displaySettings?.readerBackgroundColor?.takeIf { it != 0x00000000L }?.let { color ->
+            setBackgroundColor(android.graphics.Color.rgb(
+                ((color shr 16) and 0xFF).toInt(),
+                ((color shr 8) and 0xFF).toInt(),
+                (color and 0xFF).toInt()
+            ))
+        }
         layoutParams = ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -84,15 +94,25 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         val session = ReadiumSessionStore.get(sessionId) ?: return
         hideSystemBars()
         if (savedInstanceState == null) {
-            childFragmentManager.commitNow {
-                when (session) {
-                    is EpubReadiumSession -> add(containerId, EpubNavigatorFragment::class.java, Bundle(), NAVIGATOR_TAG)
-                    is PdfReadiumSession -> add(containerId, PdfNavigatorFragment::class.java, Bundle(), NAVIGATOR_TAG)
+            view.post {
+                if (!isAdded || childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) != null) return@post
+                childFragmentManager.commitNow {
+                    when (session) {
+                        is EpubReadiumSession -> add(containerId, EpubNavigatorFragment::class.java, Bundle(), NAVIGATOR_TAG)
+                        is PdfReadiumSession -> add(containerId, PdfNavigatorFragment::class.java, Bundle(), NAVIGATOR_TAG)
+                    }
                 }
+                setupNavigator(view, session)
             }
+        } else {
+            setupNavigator(view, session)
         }
+    }
+
+    private fun setupNavigator(view: View, session: ReadiumSession) {
         val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
         applyReaderSettings(session, navigator, session.displaySettings)
+        stabilizeInitialLayout(view)
         (navigator as? VisualNavigator)?.addInputListener(object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
                 val viewWidth = view.width.takeIf { it > 0 } ?: return false
@@ -131,7 +151,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
                 }
             }
         })
-        viewLifecycleOwner.lifecycleScope.launch { applyAnnotationDecorations(session.bookId, navigator) }
+        viewLifecycleOwner.lifecycleScope.launch { applyAnnotationDecorations(activeServerId(), session.bookId, navigator) }
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                 navigator.currentLocator
@@ -187,7 +207,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
                     .launchIn(this)
                 ReadiumUiEvents.annotationChanged
                     .onEach { targetSessionId ->
-                        if (targetSessionId == sessionId) applyAnnotationDecorations(session.bookId, navigator)
+                        if (targetSessionId == sessionId) applyAnnotationDecorations(activeServerId(), session.bookId, navigator)
                     }
                     .launchIn(this)
             }
@@ -228,21 +248,30 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
 
     private suspend fun saveProgress(bookId: Int, locator: Locator) {
         val progression = locator.locations.totalProgression ?: 0.0
-        ReaderDatabase.get(requireContext()).readerDao().saveProgress(
-            ReadingProgressEntity(
-                bookId = bookId,
+        val now = System.currentTimeMillis()
+        val dao = ReaderDatabase.get(requireContext()).readerDao()
+        dao.saveProgress(
+                ReadingProgressEntity(
+                    serverId = activeServerId(),
+                    bookId = bookId,
                 locatorJson = locator.toJSON().toString(),
                 progression = progression,
-                updatedAt = System.currentTimeMillis()
+                updatedAt = now
             )
         )
+        val serverId = activeServerId()
+        val existing = dao.getRecentEntry(serverId, bookId)
+        if (existing != null) {
+            dao.upsertRecentEntry(existing.copy(progression = progression, updatedAt = now))
+        }
         ReadiumUiEvents.emitProgress(sessionId, progression)
     }
 
     private suspend fun addBookmark(bookId: Int, locator: Locator) {
         ReaderDatabase.get(requireContext()).readerDao().addBookmark(
-            ReaderBookmarkEntity(
-                bookId = bookId,
+                ReaderBookmarkEntity(
+                    serverId = activeServerId(),
+                    bookId = bookId,
                 title = bookmarkTitle(locator),
                 locatorJson = locator.toJSON().toString(),
                 progression = locator.locations.totalProgression ?: 0.0,
@@ -258,8 +287,9 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         val locator = selection?.locator ?: navigator.currentLocator.value
         val selectedText = locatorTitle(locator)
         ReaderDatabase.get(requireContext()).readerDao().saveAnnotation(
-            ReaderAnnotationEntity(
-                bookId = bookId,
+                ReaderAnnotationEntity(
+                    serverId = activeServerId(),
+                    bookId = bookId,
                 locatorJson = locator.toJSON().toString(),
                 selectedText = selectedText.ifBlank { "当前位置" },
                 note = note.trim().take(2000),
@@ -269,7 +299,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
             )
         )
         (navigator as? SelectableNavigator)?.clearSelection()
-        applyAnnotationDecorations(bookId, navigator)
+        applyAnnotationDecorations(activeServerId(), bookId, navigator)
         ReadiumUiEvents.emitAnnotationAdded(sessionId)
         android.widget.Toast.makeText(requireContext(), "已保存笔记", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -296,15 +326,31 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         ?.trim()
         .orEmpty()
 
+    private fun shouldAnimate(): Boolean {
+        val settings = ReadiumSessionStore.get(sessionId)?.displaySettings ?: return true
+        return when (settings.pageAnimation) {
+            ReaderPageAnimation.NONE -> settings.forceTapAnimation
+            ReaderPageAnimation.OVERRIDE -> true
+            else -> true
+        }
+    }
+
+    private fun scrollShouldAnimate(settings: ReaderDisplaySettings): Boolean {
+        return when (settings.pageAnimation) {
+            ReaderPageAnimation.NONE -> settings.forceTapAnimation
+            else -> true
+        }
+    }
+
     private fun goBackward(navigator: Navigator): Boolean = when (navigator) {
-        is EpubNavigatorFragment -> navigator.goBackward(ReadiumSessionStore.get(sessionId)?.displaySettings?.pageAnimation != ReaderPageAnimation.NONE)
-        is PdfNavigatorFragment<*, *> -> navigator.goBackward(ReadiumSessionStore.get(sessionId)?.displaySettings?.pageAnimation != ReaderPageAnimation.NONE)
+        is EpubNavigatorFragment -> navigator.goBackward(shouldAnimate())
+        is PdfNavigatorFragment<*, *> -> navigator.goBackward(shouldAnimate())
         else -> false
     }
 
     private fun goForward(navigator: Navigator): Boolean = when (navigator) {
-        is EpubNavigatorFragment -> navigator.goForward(ReadiumSessionStore.get(sessionId)?.displaySettings?.pageAnimation != ReaderPageAnimation.NONE)
-        is PdfNavigatorFragment<*, *> -> navigator.goForward(ReadiumSessionStore.get(sessionId)?.displaySettings?.pageAnimation != ReaderPageAnimation.NONE)
+        is EpubNavigatorFragment -> navigator.goForward(shouldAnimate())
+        is PdfNavigatorFragment<*, *> -> navigator.goForward(shouldAnimate())
         else -> false
     }
 
@@ -347,7 +393,15 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
             y > height * 0.67f -> true
             else -> return false
         }
+        val noAnim = !scrollShouldAnimate(settings)
         if (navigator is EpubNavigatorFragment) {
+            if (noAnim) {
+                val deltaPx = 0.84f * height
+                viewLifecycleOwner.lifecycleScope.launch {
+                    navigator.evaluateJavascript("window.scrollBy(0, ${if (forward) deltaPx else -deltaPx});")
+                }
+                return true
+            }
             val keepLine = if (settings.scrollKeepLine) "true" else "false"
             viewLifecycleOwner.lifecycleScope.launch {
                 navigator.evaluateJavascript(
@@ -372,6 +426,12 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
             }
             return true
         }
+        if (noAnim) {
+            val visual = navigator as? VisualNavigator ?: return false
+            val snapDelta = (height * 0.84f).toInt()
+            visual.publicationView.scrollBy(0, if (forward) snapDelta else -snapDelta)
+            return true
+        }
         val linePx = if (settings.scrollKeepLine) (24 * resources.displayMetrics.density).toInt() else 0
         val delta = ((height * 0.84f).toInt() - linePx).coerceAtLeast((height * 0.55f).toInt())
         val visual = navigator as? VisualNavigator ?: return false
@@ -390,9 +450,9 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         navigator.go(links[(page - 1).coerceIn(0, links.lastIndex)])
     }
 
-    private suspend fun applyAnnotationDecorations(bookId: Int, navigator: Navigator) {
+    private suspend fun applyAnnotationDecorations(serverId: String, bookId: Int, navigator: Navigator) {
         val decorable = navigator as? DecorableNavigator ?: return
-        val annotations = ReaderDatabase.get(requireContext()).readerDao().getAnnotations(bookId)
+        val annotations = ReaderDatabase.get(requireContext()).readerDao().getAnnotations(serverId, bookId)
         val decorations = annotations.mapNotNull { annotation ->
             runCatching { Locator.fromJSON(JSONObject(annotation.locatorJson)) }
                 .getOrNull()
@@ -407,6 +467,8 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         decorable.applyDecorations(decorations, "talebook-annotations")
     }
 
+    private suspend fun activeServerId(): String = SettingsRepository(requireContext().applicationContext).activeLibraryServerId.first()
+
     private fun findLink(links: List<Link>, href: String): Link? {
         for (link in links) {
             if (link.href.toString() == href) return link
@@ -417,6 +479,15 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
     }
 
     private fun applyReaderSettings(session: ReadiumSession, navigator: Navigator, settings: ReaderDisplaySettings) {
+        if (settings.readerBackgroundColor != 0x00000000L) {
+            val color = android.graphics.Color.rgb(
+                ((settings.readerBackgroundColor shr 16) and 0xFF).toInt(),
+                ((settings.readerBackgroundColor shr 8) and 0xFF).toInt(),
+                (settings.readerBackgroundColor and 0xFF).toInt()
+            )
+            view?.setBackgroundColor(color)
+            activity?.window?.decorView?.setBackgroundColor(color)
+        }
         val window = activity?.window
         if (window != null) {
             window.attributes = window.attributes.apply {
@@ -429,14 +500,16 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
             }
         }
         if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
+            val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !settings.forcePublisherFonts
+            val readiumFontFamily = when (settings.fontFamily) {
+                ReaderFontFamily.DEFAULT -> if (avoidLargePublisherFonts) org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF else null
+                ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
+                ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
+                ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
+            }
             navigator.submitPreferences(
                 EpubPreferences(
-                    fontFamily = when (settings.fontFamily) {
-                        ReaderFontFamily.DEFAULT -> null
-                        ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
-                        ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
-                        ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
-                    },
+                    fontFamily = readiumFontFamily,
                     fontSize = settings.fontScale.toDouble(),
                     lineHeight = settings.lineHeight.toDouble(),
                     pageMargins = settings.pageMargins.toDouble(),
@@ -448,9 +521,69 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
                         ReaderTheme.LIGHT -> Theme.LIGHT
                         ReaderTheme.SEPIA -> Theme.SEPIA
                         ReaderTheme.DARK -> Theme.DARK
+                        ReaderTheme.PINK -> Theme.LIGHT
+                        ReaderTheme.BLUE -> Theme.LIGHT
+                        ReaderTheme.GREEN -> Theme.LIGHT
+                        ReaderTheme.CUSTOM -> Theme.SEPIA
                     }
                 )
             )
+            injectCustomCss(navigator, settings, avoidLargePublisherFonts)
+        }
+    }
+
+    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean) {
+        val css = buildString {
+            if (avoidLargePublisherFonts) {
+                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
+            }
+            if (settings.letterSpacing > 0f) {
+                append("html, body, p, span, div, li { letter-spacing: ${settings.letterSpacing}px !important; }")
+            }
+            if (settings.customThemeEnabled || settings.readerBackgroundColor != 0x00000000L || settings.readerTextColor != 0x00000000L) {
+                val bgHex = String.format("#%06X", settings.readerBackgroundColor and 0xFFFFFF)
+                val fgHex = String.format("#%06X", settings.readerTextColor and 0xFFFFFF)
+                val scheme = if (settings.appDark) "dark" else "light"
+                append("html, body { min-height: 100% !important; background: $bgHex !important; color: $fgHex !important; color-scheme: $scheme !important; }")
+                append("body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { color: $fgHex !important; -webkit-text-fill-color: $fgHex !important; }")
+                append("body::before { content: ''; position: fixed; inset: 0; z-index: -1; background: $bgHex !important; }")
+                append(".readium-navigator, .r2-navigator, .r2-viewport, .re-publication, .re-flow-content-manager, .container, .rescenter, .topcoat-tab-bar, [data-fixed='true'], [reflowable], [paginated], iframe { background: $bgHex !important; background-color: $bgHex !important; }")
+            }
+            if (settings.paragraphSpacing > 0f) {
+                val marginEm = settings.paragraphSpacing * 0.6
+                append("html p, html li { margin-top: ${marginEm}em !important; margin-bottom: ${marginEm}em !important; }")
+            }
+        }
+        val escaped = css.replace("'", "\\'").replace("\n", " ")
+        val jsBgHex = String.format("#%06X", settings.readerBackgroundColor and 0xFFFFFF)
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(200)
+            runCatching {
+                navigator.evaluateJavascript(
+                    "(function() { var old = document.getElementById('talebook-reader-custom-css'); if (old) old.remove(); if ('$escaped'.length > 0) { var s = document.createElement('style'); s.id = 'talebook-reader-custom-css'; s.type = 'text/css'; s.innerHTML = '$escaped'; (document.head || document.documentElement).appendChild(s); document.documentElement.style.backgroundColor='$jsBgHex'; document.body && (document.body.style.backgroundColor='$jsBgHex'); } })();"
+                )
+            }.onFailure { error ->
+                android.util.Log.w("TaleReadium", "Custom CSS injection skipped: ${error.message}")
+            }
+        }
+    }
+
+    private fun publisherFontFamilyCss(fontFamily: ReaderFontFamily): String = when (fontFamily) {
+        ReaderFontFamily.SERIF -> "serif"
+        ReaderFontFamily.MONOSPACE -> "monospace"
+        ReaderFontFamily.DEFAULT,
+        ReaderFontFamily.SANS_SERIF -> "sans-serif"
+    }
+
+    private fun stabilizeInitialLayout(view: View) {
+        view.post {
+            view.requestApplyInsets()
+            view.requestLayout()
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(180)
+            view.requestApplyInsets()
+            view.requestLayout()
         }
     }
 

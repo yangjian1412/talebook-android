@@ -6,8 +6,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,21 +18,28 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.talebook.app.data.repository.RecentBookStore
+import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.ui.components.BookCard
 import com.talebook.app.viewmodel.HomeViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    contentPadding: PaddingValues = PaddingValues(),
     onBookClick: (Int) -> Unit,
     onNavigateSearch: () -> Unit,
     onNavigateLibrary: () -> Unit,
-    onNavigateSettings: () -> Unit,
     viewModel: HomeViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val settingsRepository = remember { SettingsRepository(context.applicationContext) }
+    val servers by settingsRepository.libraryServers.collectAsState(initial = emptyList())
+    val activeServerId by settingsRepository.activeLibraryServerId.collectAsState(initial = SettingsRepository.DEFAULT_SERVER_ID)
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    var serverMenuExpanded by remember { mutableStateOf(false) }
     var localRecentBooks by remember { mutableStateOf(RecentBookStore.get(context)) }
 
     LaunchedEffect(Unit) {
@@ -53,22 +60,25 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Tale Book") },
+                title = { Text("书库") },
                 actions = {
                     IconButton(onClick = onNavigateSearch) {
                         Icon(Icons.Default.Search, contentDescription = "搜索")
-                    }
-                    IconButton(onClick = onNavigateSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
                 }
             )
         }
     ) { padding ->
+        val combinedPadding = PaddingValues(
+            start = padding.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+            top = padding.calculateTopPadding(),
+            end = padding.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+            bottom = padding.calculateBottomPadding() + contentPadding.calculateBottomPadding()
+        )
         when {
             uiState.isLoading -> {
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = Modifier.fillMaxSize().padding(combinedPadding),
                     contentAlignment = androidx.compose.ui.Alignment.Center
                 ) {
                     CircularProgressIndicator()
@@ -76,7 +86,7 @@ fun HomeScreen(
             }
             uiState.error != null -> {
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = Modifier.fillMaxSize().padding(combinedPadding),
                     contentAlignment = androidx.compose.ui.Alignment.Center
                 ) {
                     Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
@@ -94,10 +104,34 @@ fun HomeScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
+                        .padding(combinedPadding)
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp)
                 ) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)) {
+                        OutlinedButton(onClick = { serverMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(servers.firstOrNull { it.id == activeServerId }?.name ?: "当前书库", modifier = Modifier.weight(1f))
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = serverMenuExpanded,
+                            onDismissRequest = { serverMenuExpanded = false }
+                        ) {
+                            servers.forEach { server ->
+                                DropdownMenuItem(
+                                    text = { Text(server.name.ifBlank { server.baseUrl }) },
+                                    onClick = {
+                                        serverMenuExpanded = false
+                                        scope.launch {
+                                            settingsRepository.setActiveLibraryServer(server.id)
+                                            viewModel.load()
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     if (localRecentBooks.isNotEmpty()) {
                         Text(
                             text = "最近浏览",

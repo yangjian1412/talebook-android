@@ -4,6 +4,7 @@ import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.data.model.ApiResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.talebook.app.data.repository.SettingsRepository
 
 sealed class LoginResult {
     data class Success(
@@ -38,7 +39,7 @@ class AuthRepository {
     suspend fun signOut(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             api.signOut()
-            RetrofitClient.clearCookies()
+            RetrofitClient.clearCurrentHostCookies()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

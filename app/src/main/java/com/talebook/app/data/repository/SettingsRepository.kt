@@ -9,18 +9,40 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import com.talebook.app.data.api.RetrofitClient
+import com.talebook.app.ui.theme.ThemePresets
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+data class LibraryServerConfig(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val loginMode: String = "",
+    val username: String = "",
+    val password: String = "",
+    val accessCode: String = "",
+    val nickname: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 class SettingsRepository(private val context: Context) {
     companion object {
+        const val DEFAULT_SERVER_ID = "default"
         const val THEME_LIGHT = "light"
         const val THEME_DARK = "dark"
         const val THEME_AUTO = "auto"
         const val READER_LOCAL = "local"
         const val READER_ONLINE = "online"
+        const val START_TAB_RECENT = "recent"
+        const val START_TAB_LIBRARY = "library"
+        const val START_TAB_SETTINGS = "settings"
 
         private val SERVER_URL_KEY = stringPreferencesKey("server_url")
         private val USERNAME_KEY = stringPreferencesKey("username")
@@ -28,6 +50,11 @@ class SettingsRepository(private val context: Context) {
         private val LOGIN_MODE_KEY = stringPreferencesKey("login_mode")  // "code" / "password" / ""
         private val USER_ID_KEY = intPreferencesKey("user_id")
         private val THEME_MODE_KEY = stringPreferencesKey("theme_mode")  // "light" / "dark" / "auto"
+        private val DAY_THEME_PRESET_KEY = stringPreferencesKey("day_theme_preset")
+        private val NIGHT_THEME_PRESET_KEY = stringPreferencesKey("night_theme_preset")
+        private val APP_ACCENT_KEY = stringPreferencesKey("app_accent")
+        private val DAY_CUSTOM_BACKGROUND_KEY = stringPreferencesKey("day_custom_background")
+        private val DAY_CUSTOM_TEXT_KEY = stringPreferencesKey("day_custom_text")
         private val READER_MODE_KEY = stringPreferencesKey("reader_mode")  // "local" / "online"
         private val READER_CACHE_LIMIT_MB_KEY = intPreferencesKey("reader_cache_limit_mb")
         private val READER_AUTO_CACHE_ON_WIFI_KEY = booleanPreferencesKey("reader_auto_cache_on_wifi")
@@ -42,35 +69,47 @@ class SettingsRepository(private val context: Context) {
         private val READER_PAGE_TURN_MODE_KEY = stringPreferencesKey("reader_page_turn_mode")
         private val READER_PAGE_MARGINS_KEY = floatPreferencesKey("reader_page_margins")
         private val READER_PARAGRAPH_SPACING_KEY = floatPreferencesKey("reader_paragraph_spacing")
+        private val READER_LETTER_SPACING_KEY = floatPreferencesKey("reader_letter_spacing")
         private val READER_PUBLISHER_STYLES_KEY = booleanPreferencesKey("reader_publisher_styles")
+        private val READER_FORCE_PUBLISHER_FONTS_KEY = booleanPreferencesKey("reader_force_publisher_fonts")
         private val READER_KEEP_SCREEN_ON_KEY = booleanPreferencesKey("reader_keep_screen_on")
         private val READER_PAGE_ANIMATION_KEY = stringPreferencesKey("reader_page_animation")
         private val READER_SCROLL_TAP_PAGE_TURN_KEY = booleanPreferencesKey("reader_scroll_tap_page_turn")
         private val READER_SCROLL_KEEP_LINE_KEY = booleanPreferencesKey("reader_scroll_keep_line")
         private val READER_VOLUME_KEY_PAGE_TURN_KEY = booleanPreferencesKey("reader_volume_key_page_turn")
+        private val READER_FORCE_TAP_ANIMATION_KEY = booleanPreferencesKey("reader_force_tap_animation")
+        private val READER_BACKGROUND_COLOR_KEY = stringPreferencesKey("reader_background_color")
+        private val READER_TEXT_COLOR_KEY = stringPreferencesKey("reader_text_color")
+        private val READER_CUSTOM_THEME_ENABLED_KEY = booleanPreferencesKey("reader_custom_theme_enabled")
         private val TTS_SPEECH_RATE_KEY = floatPreferencesKey("tts_speech_rate")
         private val TTS_PITCH_KEY = floatPreferencesKey("tts_pitch")
         private val TTS_VOICE_NAME_KEY = stringPreferencesKey("tts_voice_name")
         private val TTS_SLEEP_ENABLED_KEY = booleanPreferencesKey("tts_sleep_enabled")
         private val TTS_SLEEP_MINUTES_KEY = intPreferencesKey("tts_sleep_minutes")
+        private val LIBRARY_SERVERS_KEY = stringPreferencesKey("library_servers_json")
+        private val ACTIVE_LIBRARY_SERVER_ID_KEY = stringPreferencesKey("active_library_server_id")
+        private val START_TAB_KEY = stringPreferencesKey("start_tab")
         private const val DEFAULT_URL = "https://book.liufenyi.xyz:9973"
         const val DEFAULT_CACHE_LIMIT_MB = 1024
     }
 
+    private val gson = Gson()
+    private val serverListType = object : TypeToken<List<LibraryServerConfig>>() {}.type
+
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[SERVER_URL_KEY] ?: DEFAULT_URL
+        activeServerFromPrefs(prefs).baseUrl
     }
 
     val username: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[USERNAME_KEY] ?: ""
+        activeServerFromPrefs(prefs).username.ifBlank { prefs[USERNAME_KEY] ?: "" }
     }
 
     val nickname: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[NICKNAME_KEY] ?: ""
+        activeServerFromPrefs(prefs).nickname.ifBlank { prefs[NICKNAME_KEY] ?: "" }
     }
 
     val loginMode: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[LOGIN_MODE_KEY] ?: ""
+        activeServerFromPrefs(prefs).loginMode.ifBlank { prefs[LOGIN_MODE_KEY] ?: "" }
     }
 
     val userId: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -78,12 +117,51 @@ class SettingsRepository(private val context: Context) {
     }
 
     val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        val mode = prefs[LOGIN_MODE_KEY] ?: ""
+        val mode = activeServerFromPrefs(prefs).loginMode.ifBlank { prefs[LOGIN_MODE_KEY] ?: "" }
         mode.isNotEmpty()
+    }
+
+    val libraryServers: Flow<List<LibraryServerConfig>> = context.dataStore.data.map { prefs ->
+        serversFromPrefs(prefs)
+    }
+
+    val activeLibraryServerId: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+    }
+
+    val activeLibraryServer: Flow<LibraryServerConfig> = context.dataStore.data.map { prefs ->
+        activeServerFromPrefs(prefs)
+    }
+
+        val startTab: Flow<String> = context.dataStore.data.map { prefs ->
+        when (val value = prefs[START_TAB_KEY]) {
+            START_TAB_RECENT, START_TAB_LIBRARY, START_TAB_SETTINGS -> value
+            else -> START_TAB_RECENT
+        }
     }
 
     val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[THEME_MODE_KEY] ?: THEME_AUTO
+    }
+
+    val dayThemePreset: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[DAY_THEME_PRESET_KEY]?.takeIf { value -> ThemePresets.day.any { it.id == value } } ?: ThemePresets.DAY_WHITE
+    }
+
+    val nightThemePreset: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[NIGHT_THEME_PRESET_KEY]?.takeIf { value -> ThemePresets.night.any { it.id == value } } ?: ThemePresets.NIGHT_CHARCOAL
+    }
+
+    val appAccent: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[APP_ACCENT_KEY]?.takeIf { value -> ThemePresets.accents.any { it.id == value } } ?: ThemePresets.accents.first().id
+    }
+
+    val dayCustomBackground: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[DAY_CUSTOM_BACKGROUND_KEY]?.toLongOrNull() ?: ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.background
+    }
+
+    val dayCustomText: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[DAY_CUSTOM_TEXT_KEY]?.toLongOrNull() ?: ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text
     }
 
     val readerMode: Flow<String> = context.dataStore.data.map { prefs ->
@@ -142,8 +220,16 @@ class SettingsRepository(private val context: Context) {
         prefs[READER_PARAGRAPH_SPACING_KEY] ?: 1.0f
     }
 
+    val readerLetterSpacing: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[READER_LETTER_SPACING_KEY] ?: 0f
+    }
+
     val readerPublisherStyles: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_PUBLISHER_STYLES_KEY] ?: true
+    }
+
+    val readerForcePublisherFonts: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[READER_FORCE_PUBLISHER_FONTS_KEY] ?: false
     }
 
     val readerKeepScreenOn: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -152,6 +238,10 @@ class SettingsRepository(private val context: Context) {
 
     val readerPageAnimation: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[READER_PAGE_ANIMATION_KEY] ?: "smooth"
+    }
+
+    val readerForceTapAnimation: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[READER_FORCE_TAP_ANIMATION_KEY] ?: true
     }
 
     val readerScrollTapPageTurn: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -164,6 +254,18 @@ class SettingsRepository(private val context: Context) {
 
     val readerVolumeKeyPageTurn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_VOLUME_KEY_PAGE_TURN_KEY] ?: false
+    }
+
+    val readerBackgroundColor: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[READER_BACKGROUND_COLOR_KEY]?.toLongOrNull() ?: 0x00000000L
+    }
+
+    val readerTextColor: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[READER_TEXT_COLOR_KEY]?.toLongOrNull() ?: 0x00000000L
+    }
+
+    val readerCustomThemeEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[READER_CUSTOM_THEME_ENABLED_KEY] ?: false
     }
 
     val ttsSpeechRate: Flow<Float> = context.dataStore.data.map { prefs ->
@@ -188,23 +290,140 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun saveServerUrl(url: String) {
         context.dataStore.edit { prefs ->
-            prefs[SERVER_URL_KEY] = url
+            val normalized = normalizeUrl(url)
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            val servers = serversFromPrefs(prefs).map { server ->
+                if (server.id == activeId) {
+                    server.copy(baseUrl = normalized, updatedAt = System.currentTimeMillis())
+                } else {
+                    server
+                }
+            }
+            prefs[SERVER_URL_KEY] = normalized
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
         }
     }
 
     suspend fun saveLoginInfo(mode: String, username: String, nickname: String) {
         context.dataStore.edit { prefs ->
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            val servers = serversFromPrefs(prefs).map { server ->
+                if (server.id == activeId) {
+                    server.copy(
+                        loginMode = mode,
+                        username = username,
+                        nickname = nickname,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    server
+                }
+            }
             prefs[LOGIN_MODE_KEY] = mode
             prefs[USERNAME_KEY] = username
             prefs[NICKNAME_KEY] = nickname
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
+        }
+    }
+
+    suspend fun saveLoginSecret(mode: String, username: String, password: String, accessCode: String, nickname: String = username) {
+        context.dataStore.edit { prefs ->
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            val servers = serversFromPrefs(prefs).map { server ->
+                if (server.id == activeId) {
+                    server.copy(
+                        loginMode = mode,
+                        username = username,
+                        password = if (mode == "password") password else "",
+                        accessCode = if (mode == "code") accessCode else "",
+                        nickname = nickname,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    server
+                }
+            }
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
         }
     }
 
     suspend fun clearLogin() {
         context.dataStore.edit { prefs ->
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            val servers = serversFromPrefs(prefs).map { server ->
+                if (server.id == activeId) {
+                    server.copy(loginMode = "", nickname = "", updatedAt = System.currentTimeMillis())
+                } else {
+                    server
+                }
+            }
             prefs.remove(LOGIN_MODE_KEY)
             prefs.remove(USERNAME_KEY)
             prefs.remove(NICKNAME_KEY)
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
+        }
+    }
+
+    suspend fun saveStartTab(tab: String) {
+        val normalized = when (tab) {
+            START_TAB_RECENT, START_TAB_LIBRARY, START_TAB_SETTINGS -> tab
+            else -> START_TAB_RECENT
+        }
+        context.dataStore.edit { prefs -> prefs[START_TAB_KEY] = normalized }
+    }
+
+    suspend fun setActiveLibraryServer(serverId: String) {
+        context.dataStore.edit { prefs ->
+            val server = serversFromPrefs(prefs).firstOrNull { it.id == serverId } ?: return@edit
+            prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] = server.id
+            prefs[SERVER_URL_KEY] = server.baseUrl
+            if (server.loginMode.isBlank()) {
+                prefs.remove(LOGIN_MODE_KEY)
+                prefs.remove(USERNAME_KEY)
+                prefs.remove(NICKNAME_KEY)
+            } else {
+                prefs[LOGIN_MODE_KEY] = server.loginMode
+                prefs[USERNAME_KEY] = server.username
+                prefs[NICKNAME_KEY] = server.nickname
+            }
+            RetrofitClient.updateBaseUrl(server.baseUrl)
+        }
+    }
+
+    suspend fun upsertLibraryServer(server: LibraryServerConfig): String {
+        val id = server.id.ifBlank { UUID.randomUUID().toString() }
+        val now = System.currentTimeMillis()
+        val normalized = server.copy(
+            id = id,
+            name = server.name.ifBlank { server.baseUrl }.trim().take(80),
+            baseUrl = normalizeUrl(server.baseUrl),
+            createdAt = if (server.createdAt > 0) server.createdAt else now,
+            updatedAt = now
+        )
+        context.dataStore.edit { prefs ->
+            val existing = serversFromPrefs(prefs).filterNot { it.id == id }
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(existing + normalized)
+            if (prefs[ACTIVE_LIBRARY_SERVER_ID_KEY].isNullOrBlank()) {
+                prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] = id
+                prefs[SERVER_URL_KEY] = normalized.baseUrl
+            }
+        }
+        return id
+    }
+
+    suspend fun deleteLibraryServer(serverId: String) {
+        if (serverId == DEFAULT_SERVER_ID) return
+        context.dataStore.edit { prefs ->
+            val remaining = serversFromPrefs(prefs).filterNot { it.id == serverId }
+            val safeRemaining = remaining.ifEmpty { listOf(defaultServer(prefs)) }
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(safeRemaining)
+            if (activeId == serverId) {
+                val fallback = safeRemaining.first()
+                prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] = fallback.id
+                prefs[SERVER_URL_KEY] = fallback.baseUrl
+                RetrofitClient.updateBaseUrl(fallback.baseUrl)
+            }
         }
     }
 
@@ -215,6 +434,39 @@ class SettingsRepository(private val context: Context) {
         }
         context.dataStore.edit { prefs ->
             prefs[THEME_MODE_KEY] = normalized
+        }
+    }
+
+    suspend fun saveDayThemePreset(preset: String) {
+        val normalized = preset.takeIf { value -> ThemePresets.day.any { it.id == value } } ?: ThemePresets.DAY_WHITE
+        context.dataStore.edit { prefs ->
+            prefs[DAY_THEME_PRESET_KEY] = normalized
+            prefs[READER_THEME_KEY] = normalized.toLegacyReaderTheme(false)
+        }
+    }
+
+    suspend fun saveNightThemePreset(preset: String) {
+        val normalized = preset.takeIf { value -> ThemePresets.night.any { it.id == value } } ?: ThemePresets.NIGHT_CHARCOAL
+        context.dataStore.edit { prefs ->
+            prefs[NIGHT_THEME_PRESET_KEY] = normalized
+            prefs[READER_THEME_KEY] = normalized.toLegacyReaderTheme(true)
+        }
+    }
+
+    suspend fun saveAppAccent(accent: String) {
+        val normalized = accent.takeIf { value -> ThemePresets.accents.any { it.id == value } } ?: ThemePresets.accents.first().id
+        context.dataStore.edit { prefs -> prefs[APP_ACCENT_KEY] = normalized }
+    }
+
+    suspend fun saveDayCustomColors(background: Long, text: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[DAY_CUSTOM_BACKGROUND_KEY] = (background and 0xFFFFFF).toString()
+            prefs[DAY_CUSTOM_TEXT_KEY] = (text and 0xFFFFFF).toString()
+            prefs[DAY_THEME_PRESET_KEY] = ThemePresets.DAY_CUSTOM
+            prefs[READER_BACKGROUND_COLOR_KEY] = (background and 0xFFFFFF).toString()
+            prefs[READER_TEXT_COLOR_KEY] = (text and 0xFFFFFF).toString()
+            prefs[READER_CUSTOM_THEME_ENABLED_KEY] = true
+            prefs[READER_THEME_KEY] = "custom"
         }
     }
 
@@ -252,12 +504,18 @@ class SettingsRepository(private val context: Context) {
         pageTurnMode: String,
         pageMargins: Float,
         paragraphSpacing: Float,
+        letterSpacing: Float,
         publisherStyles: Boolean,
+        forcePublisherFonts: Boolean,
         keepScreenOn: Boolean,
         pageAnimation: String,
         scrollTapPageTurn: Boolean,
         scrollKeepLine: Boolean,
-        volumeKeyPageTurn: Boolean
+        volumeKeyPageTurn: Boolean,
+        forceTapAnimation: Boolean,
+        readerBackgroundColor: Long,
+        readerTextColor: Long,
+        customThemeEnabled: Boolean
     ) {
         context.dataStore.edit { prefs ->
             prefs[READER_FONT_SCALE_KEY] = fontScale.coerceIn(0.7f, 1.8f)
@@ -270,7 +528,7 @@ class SettingsRepository(private val context: Context) {
             prefs[READER_SCROLL_MODE_KEY] = scrollMode
             prefs[READER_SYSTEM_BRIGHTNESS_KEY] = useSystemBrightness
             prefs[READER_THEME_KEY] = when (theme) {
-                "system", "light", "sepia", "dark" -> theme
+                "system", "light", "sepia", "dark", "pink", "blue", "green", "custom" -> theme
                 else -> "system"
             }
             prefs[READER_TAP_PAGE_TURN_KEY] = tapPageTurn
@@ -280,15 +538,21 @@ class SettingsRepository(private val context: Context) {
             }
             prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0.5f, 2.0f)
             prefs[READER_PARAGRAPH_SPACING_KEY] = paragraphSpacing.coerceIn(0.0f, 2.0f)
+            prefs[READER_LETTER_SPACING_KEY] = letterSpacing.coerceIn(0f, 6f)
             prefs[READER_PUBLISHER_STYLES_KEY] = publisherStyles
+            prefs[READER_FORCE_PUBLISHER_FONTS_KEY] = forcePublisherFonts
             prefs[READER_KEEP_SCREEN_ON_KEY] = keepScreenOn
             prefs[READER_PAGE_ANIMATION_KEY] = when (pageAnimation) {
-                "smooth", "slide", "cover", "none" -> pageAnimation
+                "smooth", "slide", "cover", "override", "none" -> pageAnimation
                 else -> "smooth"
             }
             prefs[READER_SCROLL_TAP_PAGE_TURN_KEY] = scrollTapPageTurn
             prefs[READER_SCROLL_KEEP_LINE_KEY] = scrollKeepLine
             prefs[READER_VOLUME_KEY_PAGE_TURN_KEY] = volumeKeyPageTurn
+            prefs[READER_FORCE_TAP_ANIMATION_KEY] = forceTapAnimation
+            prefs[READER_BACKGROUND_COLOR_KEY] = (readerBackgroundColor and 0xFFFFFF).toString()
+            prefs[READER_TEXT_COLOR_KEY] = (readerTextColor and 0xFFFFFF).toString()
+            prefs[READER_CUSTOM_THEME_ENABLED_KEY] = customThemeEnabled
         }
     }
 
@@ -306,5 +570,51 @@ class SettingsRepository(private val context: Context) {
             prefs[TTS_SLEEP_ENABLED_KEY] = sleepEnabled
             prefs[TTS_SLEEP_MINUTES_KEY] = sleepMinutes.coerceIn(5, 180)
         }
+    }
+
+    private fun normalizeUrl(url: String): String {
+        val trimmed = url.trim().trimEnd('/')
+        return trimmed.ifBlank { DEFAULT_URL }
+    }
+
+    private fun defaultServer(prefs: Preferences): LibraryServerConfig {
+        val url = normalizeUrl(prefs[SERVER_URL_KEY] ?: DEFAULT_URL)
+        return LibraryServerConfig(
+            id = DEFAULT_SERVER_ID,
+            name = "默认书库",
+            baseUrl = url,
+            loginMode = prefs[LOGIN_MODE_KEY] ?: "",
+            username = prefs[USERNAME_KEY] ?: "",
+            nickname = prefs[NICKNAME_KEY] ?: ""
+        )
+    }
+
+    private fun serversFromPrefs(prefs: Preferences): List<LibraryServerConfig> {
+        val raw = prefs[LIBRARY_SERVERS_KEY].orEmpty()
+        val parsed = if (raw.isBlank()) {
+            emptyList()
+        } else {
+            runCatching { gson.fromJson<List<LibraryServerConfig>>(raw, serverListType) }.getOrNull().orEmpty()
+        }
+        val cleaned = parsed
+            .filter { it.baseUrl.isNotBlank() }
+            .map { it.copy(baseUrl = normalizeUrl(it.baseUrl)) }
+        return if (cleaned.any { it.id == DEFAULT_SERVER_ID }) cleaned else listOf(defaultServer(prefs)) + cleaned
+    }
+
+    private fun activeServerFromPrefs(prefs: Preferences): LibraryServerConfig {
+        val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+        return serversFromPrefs(prefs).firstOrNull { it.id == activeId }
+            ?: serversFromPrefs(prefs).first()
+    }
+
+    private fun String.toLegacyReaderTheme(dark: Boolean): String = when {
+        dark -> "dark"
+        this == ThemePresets.DAY_EYE -> "sepia"
+        this == ThemePresets.DAY_PINK -> "pink"
+        this == ThemePresets.DAY_BLUE -> "blue"
+        this == ThemePresets.DAY_GREEN -> "green"
+        this == ThemePresets.DAY_CUSTOM -> "custom"
+        else -> "light"
     }
 }

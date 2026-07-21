@@ -10,4 +10,5 @@ import okhttp3.CookieJar
 interface CookieStorage : CookieJar {
     fun cookiesForHost(host: String): List<Cookie>
     fun clear()
+    fun clearHost(host: String)
 }

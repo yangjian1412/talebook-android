@@ -1,60 +1,73 @@
 ﻿package com.talebook.app.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import com.talebook.app.data.api.RetrofitClient
+import com.talebook.app.data.repository.LibraryServerConfig
 import com.talebook.app.data.repository.AuthRepository
 import com.talebook.app.data.repository.ReaderBackupRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.ui.theme.AppAccentPalette
+import com.talebook.app.ui.theme.ThemePresets
+import com.talebook.app.ui.theme.toColor
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     settingsRepository: SettingsRepository,
+    contentPadding: PaddingValues = PaddingValues(),
+    showBackButton: Boolean = true,
     onBack: () -> Unit,
     onLogout: () -> Unit,
-    onOpenCacheList: () -> Unit = {}
+    onOpenCacheList: () -> Unit = {},
+    onOpenNotesManagement: () -> Unit = {}
 ) {
-    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "https://book.liufenyi.xyz:9973")
     val nickname by settingsRepository.nickname.collectAsState(initial = "")
     val loginMode by settingsRepository.loginMode.collectAsState(initial = "")
     val themeMode by settingsRepository.themeMode.collectAsState(initial = SettingsRepository.THEME_AUTO)
+    val appAccent by settingsRepository.appAccent.collectAsState(initial = ThemePresets.accents.first().id)
+    val startTab by settingsRepository.startTab.collectAsState(initial = SettingsRepository.START_TAB_RECENT)
+    val servers by settingsRepository.libraryServers.collectAsState(initial = emptyList())
+    val activeServerId by settingsRepository.activeLibraryServerId.collectAsState(initial = SettingsRepository.DEFAULT_SERVER_ID)
     val readerMode by settingsRepository.readerMode.collectAsState(initial = SettingsRepository.READER_LOCAL)
     val cacheLimitMb by settingsRepository.readerCacheLimitMb.collectAsState(initial = SettingsRepository.DEFAULT_CACHE_LIMIT_MB)
     val autoCacheOnWifi by settingsRepository.readerAutoCacheOnWifi.collectAsState(initial = false)
     val context = LocalContext.current
-    var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var editCacheLimit by remember(cacheLimitMb) { mutableStateOf(cacheLimitMb.toString()) }
-    var saved by remember { mutableStateOf(false) }
     var cacheMessage by remember { mutableStateOf<String?>(null) }
     var cacheSizeText by remember { mutableStateOf("未统计") }
     var backupMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var editingServer by remember { mutableStateOf<LibraryServerConfig?>(null) }
+    var showServerDialog by remember { mutableStateOf(false) }
     val authRepository = remember { AuthRepository() }
     val readerCacheRepository = remember { ReaderCacheRepository() }
     val readerBackupRepository = remember { ReaderBackupRepository() }
@@ -110,13 +123,29 @@ fun SettingsScreen(
         )
     }
 
+    if (showServerDialog) {
+        ServerEditDialog(
+            server = editingServer,
+            onDismiss = { showServerDialog = false; editingServer = null },
+            onSave = { server ->
+                scope.launch {
+                    settingsRepository.upsertLibraryServer(server)
+                    showServerDialog = false
+                    editingServer = null
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("设置") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    if (showBackButton) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                        }
                     }
                 }
             )
@@ -126,89 +155,115 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .padding(bottom = contentPadding.calculateBottomPadding())
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            // 当前用户
-            if (loginMode.isNotEmpty()) {
-                Text(
-                    text = "当前账号",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = nickname.ifBlank { "访客" },
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = when (loginMode) {
-                                "code" -> "访问码登录"
-                                "password" -> "账号密码登录"
-                                else -> ""
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { showLogoutDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Logout, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("登出")
-                }
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-
-            // 服务器设置
             Text(
-                text = "服务器设置",
+                text = "书库与账号",
                 style = MaterialTheme.typography.titleMedium
             )
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = editUrl,
-                onValueChange = { editUrl = it; saved = false },
-                label = { Text("服务器地址") },
-                placeholder = { Text("https://book.liufenyi.xyz:9973") },
-                leadingIcon = {
-                    Icon(Icons.Default.Link, contentDescription = null)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+            Text(
+                text = if (loginMode.isBlank()) "当前未登录" else "当前：${nickname.ifBlank { "访客" }} · ${if (loginMode == "code") "访问码登录" else "账号密码登录"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = {
-                    RetrofitClient.updateBaseUrl(editUrl)
-                    scope.launch {
-                        settingsRepository.saveServerUrl(editUrl)
-                        saved = true
+            Spacer(modifier = Modifier.height(12.dp))
+            servers.forEach { server ->
+                ElevatedCard(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(server.name.ifBlank { server.baseUrl }, style = MaterialTheme.typography.titleSmall)
+                                Text(server.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = if (server.loginMode.isBlank()) "未登录" else "${server.nickname.ifBlank { server.username.ifBlank { "已登录" } }} · ${if (server.loginMode == "code") "访问码" else "账号密码"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (server.id == activeServerId) {
+                                Text("当前", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { scope.launch { settingsRepository.setActiveLibraryServer(server.id) } },
+                                enabled = server.id != activeServerId,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("切换") }
+                            OutlinedButton(
+                                onClick = { editingServer = server; showServerDialog = true },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("编辑")
+                            }
+                            if (server.id != SettingsRepository.DEFAULT_SERVER_ID) {
+                                OutlinedButton(
+                                    onClick = { scope.launch { settingsRepository.deleteLibraryServer(server.id) } },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("删除")
+                                }
+                            }
+                        }
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Save, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("保存")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { editingServer = null; showServerDialog = true },
+                    modifier = Modifier.weight(1f)
+                ) { Text("新增书库") }
+                OutlinedButton(
+                    onClick = { showLogoutDialog = true },
+                    enabled = loginMode.isNotBlank(),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Logout, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("登出当前")
+                }
             }
 
-            if (saved) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "已保存",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.bodySmall
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "外观",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("软件主题色", style = MaterialTheme.typography.titleSmall)
+            Spacer(modifier = Modifier.height(8.dp))
+            AccentPicker(
+                accents = ThemePresets.accents,
+                selected = appAccent,
+                onSelect = { accent -> scope.launch { settingsRepository.saveAppAccent(accent) } }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Column(modifier = Modifier.selectableGroup()) {
+                ThemeOptionRow(
+                    selected = themeMode == SettingsRepository.THEME_LIGHT,
+                    icon = Icons.Default.LightMode,
+                    label = "白天",
+                    onSelect = { scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_LIGHT) } }
+                )
+                ThemeOptionRow(
+                    selected = themeMode == SettingsRepository.THEME_DARK,
+                    icon = Icons.Default.DarkMode,
+                    label = "夜间",
+                    onSelect = { scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_DARK) } }
+                )
+                ThemeOptionRow(
+                    selected = themeMode == SettingsRepository.THEME_AUTO,
+                    icon = Icons.Default.Brightness6,
+                    label = "自动（跟随系统）",
+                    onSelect = { scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_AUTO) } }
                 )
             }
 
@@ -237,6 +292,43 @@ fun SettingsScreen(
                     onSelect = {
                         scope.launch { settingsRepository.saveReaderMode(SettingsRepository.READER_ONLINE) }
                     }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "阅读数据",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = onOpenNotesManagement,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("查看和导出笔记") }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        readerBackupRepository.exportToDownloads(context.applicationContext).fold(
+                            onSuccess = { path -> backupMessage = "已导出到 $path" },
+                            onFailure = { e -> backupMessage = e.message ?: "导出失败" }
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("导出阅读记录 / 书签 / 笔记") }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { showImportDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("导入最近一次阅读数据备份") }
+            backupMessage?.let { msg ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = msg,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
 
@@ -331,71 +423,22 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             Text(
-                text = "阅读数据",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        readerBackupRepository.exportToDownloads(context.applicationContext).fold(
-                            onSuccess = { path -> backupMessage = "已导出到 $path" },
-                            onFailure = { e -> backupMessage = e.message ?: "导出失败" }
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("导出阅读记录 / 书签 / 笔记")
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { showImportDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("导入最近一次阅读数据备份")
-            }
-            backupMessage?.let { msg ->
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = msg,
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // 外观（夜间模式）
-            Text(
-                text = "外观",
+                text = "启动页面",
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.height(8.dp))
             Column(modifier = Modifier.selectableGroup()) {
                 ThemeOptionRow(
-                    selected = themeMode == SettingsRepository.THEME_LIGHT,
-                    icon = Icons.Default.LightMode,
-                    label = "白天",
-                    onSelect = {
-                        scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_LIGHT) }
-                    }
+                    selected = startTab == SettingsRepository.START_TAB_RECENT,
+                    icon = Icons.Default.MenuBook,
+                    label = "最近阅读",
+                    onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_RECENT) } }
                 )
                 ThemeOptionRow(
-                    selected = themeMode == SettingsRepository.THEME_DARK,
-                    icon = Icons.Default.DarkMode,
-                    label = "夜间",
-                    onSelect = {
-                        scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_DARK) }
-                    }
-                )
-                ThemeOptionRow(
-                    selected = themeMode == SettingsRepository.THEME_AUTO,
-                    icon = Icons.Default.Brightness6,
-                    label = "自动（跟随系统）",
-                    onSelect = {
-                        scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_AUTO) }
-                    }
+                    selected = startTab == SettingsRepository.START_TAB_LIBRARY,
+                    icon = Icons.Default.Public,
+                    label = "书库",
+                    onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_LIBRARY) } }
                 )
             }
 
@@ -407,11 +450,17 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.0.0",
+                text = "Tale Book v2.0.1",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
                 text = "TaleBook 安卓客户端",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "更新日志：三标签首页、多书库配置、本地最近阅读、Readium 阅读器缓存/笔记/主题优化。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -485,4 +534,127 @@ private fun ThemeOptionRow(
     }
 }
 
-private fun Double.cacheMbText(): String = String.format(java.util.Locale.US, "%.1f", this)
+@Composable
+private fun AccentPicker(
+    accents: List<AppAccentPalette>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+        accents.forEach { accent ->
+            Column(modifier = Modifier.width(40.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(if (accent.id == selected) 32.dp else 28.dp)
+                        .clip(CircleShape)
+                        .background(accent.lightPrimary.toColor())
+                        .clickable { onSelect(accent.id) }
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = accent.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (accent.id == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerEditDialog(
+    server: LibraryServerConfig?,
+    onDismiss: () -> Unit,
+    onSave: (LibraryServerConfig) -> Unit
+) {
+    var name by remember(server) { mutableStateOf(server?.name.orEmpty()) }
+    var baseUrl by remember(server) { mutableStateOf(server?.baseUrl ?: "https://") }
+    var username by remember(server) { mutableStateOf(server?.username.orEmpty()) }
+    var password by remember(server) { mutableStateOf(server?.password.orEmpty()) }
+    var accessCode by remember(server) { mutableStateOf(server?.accessCode.orEmpty()) }
+    var loginMode by remember(server) { mutableStateOf(server?.loginMode?.ifBlank { "password" } ?: "password") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (server == null) "新增书库" else "编辑书库") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("书库名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    label = { Text("服务器地址") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = loginMode == "password",
+                        onClick = { loginMode = "password" },
+                        label = { Text("账号密码") }
+                    )
+                    FilterChip(
+                        selected = loginMode == "code",
+                        onClick = { loginMode = "code" },
+                        label = { Text("访问码") }
+                    )
+                }
+                if (loginMode == "password") {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("账号") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("密码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = accessCode,
+                        onValueChange = { accessCode = it },
+                        label = { Text("访问码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(
+                        LibraryServerConfig(
+                            id = server?.id.orEmpty(),
+                            name = name.ifBlank { baseUrl },
+                            baseUrl = baseUrl,
+                            loginMode = loginMode,
+                            username = if (loginMode == "password") username else "访客",
+                            password = if (loginMode == "password") password else "",
+                            accessCode = if (loginMode == "code") accessCode else "",
+                            nickname = server?.nickname.orEmpty(),
+                            createdAt = server?.createdAt ?: System.currentTimeMillis()
+                        )
+                    )
+                },
+                enabled = baseUrl.isNotBlank()
+            ) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}

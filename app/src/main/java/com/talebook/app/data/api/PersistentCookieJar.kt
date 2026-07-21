@@ -72,6 +72,11 @@ class PersistentCookieJar(context: Context) : CookieStorage {
         persist()
     }
 
+    override fun clearHost(host: String) {
+        store.remove(host)
+        persist()
+    }
+
     companion object {
         private const val PREFS_NAME = "talebook_cookies"
         private const val KEY_COOKIES = "cookies_json"

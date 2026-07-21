@@ -92,11 +92,17 @@ data class ReaderDisplaySettings(
     val pageMargins: Float = 1.0f,
     val paragraphSpacing: Float = 1.0f,
     val publisherStyles: Boolean = true,
+    val forcePublisherFonts: Boolean = false,
     val keepScreenOn: Boolean = false,
     val pageAnimation: ReaderPageAnimation = ReaderPageAnimation.SMOOTH,
+    val forceTapAnimation: Boolean = true,
     val scrollTapPageTurn: Boolean = true,
     val scrollKeepLine: Boolean = true,
-    val volumeKeyPageTurn: Boolean = false
+    val volumeKeyPageTurn: Boolean = false,
+    val letterSpacing: Float = 0f,
+    val readerBackgroundColor: Long = 0x00000000L,
+    val readerTextColor: Long = 0x00000000L,
+    val customThemeEnabled: Boolean = false
 )
 
 enum class ReaderFontFamily {
@@ -110,7 +116,11 @@ enum class ReaderTheme {
     SYSTEM,
     LIGHT,
     SEPIA,
-    DARK
+    DARK,
+    PINK,
+    BLUE,
+    GREEN,
+    CUSTOM
 }
 
 enum class ReaderPageTurnMode {
@@ -124,5 +134,6 @@ enum class ReaderPageAnimation {
     SMOOTH,
     SLIDE,
     COVER,
+    OVERRIDE,
     NONE
 }

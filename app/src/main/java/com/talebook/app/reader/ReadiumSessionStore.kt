@@ -13,6 +13,8 @@ sealed interface ReadiumSession {
     val bookId: Int
     val publication: Publication
     val initialLocator: Locator?
+    val isRemote: Boolean
+    val hasLargeEmbeddedFonts: Boolean
     var displaySettings: ReaderDisplaySettings
 }
 
@@ -21,6 +23,8 @@ data class EpubReadiumSession(
     override val bookId: Int,
     override val publication: Publication,
     override val initialLocator: Locator?,
+    override val isRemote: Boolean,
+    override val hasLargeEmbeddedFonts: Boolean,
     val navigatorFactory: EpubNavigatorFactory,
     override var displaySettings: ReaderDisplaySettings = ReaderDisplaySettings()
 ) : ReadiumSession
@@ -30,6 +34,8 @@ data class PdfReadiumSession(
     override val bookId: Int,
     override val publication: Publication,
     override val initialLocator: Locator?,
+    override val isRemote: Boolean,
+    override val hasLargeEmbeddedFonts: Boolean,
     val navigatorFactory: PdfNavigatorFactory<*, *, *>,
     val pdfEngineProvider: PdfiumEngineProvider,
     override var displaySettings: ReaderDisplaySettings = ReaderDisplaySettings()

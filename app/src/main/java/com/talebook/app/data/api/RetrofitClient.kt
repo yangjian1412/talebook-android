@@ -44,13 +44,13 @@ object RetrofitClient {
         android.util.Log.d("TaleInit", "RetrofitClient initialized with PersistentCookieJar")
     }
 
-    fun updateBaseUrl(url: String) {
+    fun updateBaseUrl(url: String, clearCookies: Boolean = false) {
         val normalized = if (url.endsWith("/")) url else "$url/"
         if (normalized != baseUrl) {
             baseUrl = normalized
             api = null
             client = null
-            clearCookies()
+            if (clearCookies) clearCookies()
         }
     }
 
@@ -91,6 +91,11 @@ object RetrofitClient {
 
     fun clearCookies() {
         cookieJar.clear()
+    }
+
+    fun clearCurrentHostCookies() {
+        val url = baseUrl.toHttpUrlOrNull() ?: return
+        cookieJar.clearHost(url.host)
     }
 
     private fun buildClient(): OkHttpClient {

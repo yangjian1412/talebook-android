@@ -31,6 +31,10 @@ class InMemoryCookieJar : CookieStorage {
         store.clear()
     }
 
+    override fun clearHost(host: String) {
+        store.remove(host)
+    }
+
     override fun cookiesForHost(host: String): List<Cookie> {
         val now = System.currentTimeMillis()
         return store[host]?.filter { it.expiresAt > now } ?: emptyList()

@@ -234,8 +234,13 @@ fun BookDetailScreen(
                                 cacheFormat = uiState.cacheInfo.format,
                                 cacheSizeBytes = uiState.cacheInfo.sizeBytes,
                                 cacheBusy = uiState.cacheBusy,
+                                cacheProgressBytes = uiState.cacheProgressBytes,
+                                cacheTotalBytes = uiState.cacheTotalBytes,
+                                cacheAction = uiState.cacheCurrentAction,
                                 cacheMessage = uiState.cacheMessage,
-                                onDeleteCache = { viewModel.deleteLocalCache(context.applicationContext) }
+                                onDeleteCache = { viewModel.deleteLocalCache(context.applicationContext) },
+                                onStartCache = { viewModel.startLocalCache(context.applicationContext) },
+                                onCancelCache = { viewModel.cancelLocalCache() }
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
@@ -371,28 +376,70 @@ private fun LocalReaderInfoCard(
     cacheFormat: String,
     cacheSizeBytes: Long,
     cacheBusy: Boolean,
+    cacheProgressBytes: Long,
+    cacheTotalBytes: Long,
+    cacheAction: String,
     cacheMessage: String,
-    onDeleteCache: () -> Unit
+    onDeleteCache: () -> Unit,
+    onStartCache: () -> Unit,
+    onCancelCache: () -> Unit
 ) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("本地阅读", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text("阅读进度 ${(progression * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
             LinearProgressIndicator(progress = { progression.toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-            Text(
-                text = if (isCached) {
-                    "已缓存 ${cacheFormat.uppercase()} ${(cacheSizeBytes / 1024.0 / 1024.0).formatMb()} MB"
-                } else {
-                    "未缓存"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
             if (isCached) {
-                OutlinedButton(onClick = onDeleteCache, enabled = !cacheBusy, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (cacheBusy) "删除中..." else "删除本书缓存")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "已缓存 ${cacheFormat.uppercase()} ${(cacheSizeBytes / 1024.0 / 1024.0).formatMb()} MB",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (cacheBusy) {
+                        OutlinedButton(onClick = onCancelCache, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                            Text("取消", style = MaterialTheme.typography.labelSmall)
+                        }
+                    } else {
+                        OutlinedButton(onClick = onDeleteCache, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("删除", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                if (cacheBusy) {
+                    val progress = if (cacheTotalBytes > 0) (cacheProgressBytes.toFloat() / cacheTotalBytes.toFloat()).coerceIn(0f, 1f) else 0f
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                    Text("${cacheAction.ifBlank { "缓存中" }} ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("未缓存", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (cacheBusy) {
+                        OutlinedButton(onClick = onCancelCache, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                            Text("取消", style = MaterialTheme.typography.labelSmall)
+                        }
+                    } else {
+                        Button(onClick = onStartCache, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("缓存", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                if (cacheBusy) {
+                    val progress = if (cacheTotalBytes > 0) (cacheProgressBytes.toFloat() / cacheTotalBytes.toFloat()).coerceIn(0f, 1f) else 0f
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                    Text("${cacheAction.ifBlank { "缓存中" }} ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (cacheMessage.isNotBlank()) {

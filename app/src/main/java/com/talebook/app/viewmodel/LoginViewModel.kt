@@ -77,6 +77,13 @@ class LoginViewModel(
                         username = result.username,
                         nickname = result.nickname
                     )
+                    settingsRepository.saveLoginSecret(
+                        mode = result.mode,
+                        username = result.username,
+                        password = state.password,
+                        accessCode = state.code,
+                        nickname = result.nickname
+                    )
                     _uiState.value = _uiState.value.copy(isLoading = false, success = true)
                 }
                 is LoginResult.Failure -> {

@@ -18,6 +18,8 @@ import androidx.fragment.app.FragmentActivity
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.ui.navigation.NavGraph
 import com.talebook.app.ui.theme.TaleReaderTheme
+import com.talebook.app.ui.theme.ThemePresets
+import com.talebook.app.ui.theme.toColor
 import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
@@ -46,12 +48,15 @@ class MainActivity : FragmentActivity() {
             val themeMode by settingsRepository.themeMode.collectAsState(
                 initial = SettingsRepository.THEME_AUTO
             )
+            val appAccent by settingsRepository.appAccent.collectAsState(initial = ThemePresets.accents.first().id)
+            val systemDark = isSystemInDarkTheme()
             val isDark = when (themeMode) {
                 SettingsRepository.THEME_LIGHT -> false
                 SettingsRepository.THEME_DARK -> true
-                else -> isSystemInDarkTheme()
+                else -> systemDark
             }
-            TaleReaderTheme(darkTheme = isDark) {
+            val primaryColor = ThemePresets.accentPrimary(appAccent, isDark).toColor()
+            TaleReaderTheme(darkTheme = isDark, primaryColor = primaryColor) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

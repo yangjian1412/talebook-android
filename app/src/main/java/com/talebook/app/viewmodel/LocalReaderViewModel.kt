@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.local.ReaderBookmarkEntity
 import com.talebook.app.data.local.ReaderDatabase
+import com.talebook.app.data.local.ReadingProgressEntity
+import com.talebook.app.data.local.RecentReadingEntity
 import com.talebook.app.data.repository.BookRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
@@ -22,6 +24,7 @@ import com.talebook.app.reader.ReadiumEngine
 import com.talebook.app.reader.ReadiumSessionStore
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.TtsController
+import com.talebook.app.ui.theme.ThemePresets
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,8 +42,11 @@ import org.readium.r2.shared.publication.allAreHtml
 import org.readium.r2.shared.publication.services.content.Content
 import org.readium.r2.shared.publication.services.content.content
 import org.readium.r2.shared.util.AbsoluteUrl
+import org.readium.r2.shared.util.archive.archive
 import java.io.File
 import java.net.URI
+
+private const val LARGE_EMBEDDED_FONT_BYTES = 5L * 1024L * 1024L
 
 data class LocalReaderUiState(
     val isLoading: Boolean = false,
@@ -75,11 +81,17 @@ data class LocalReaderUiState(
         pageMargins = 1.0f,
         paragraphSpacing = 1.0f,
         publisherStyles = true,
+        forcePublisherFonts = false,
         keepScreenOn = false,
         pageAnimation = ReaderPageAnimation.SMOOTH,
+        forceTapAnimation = true,
         scrollTapPageTurn = true,
         scrollKeepLine = true,
-        volumeKeyPageTurn = false
+        volumeKeyPageTurn = false,
+        letterSpacing = 0f,
+        readerBackgroundColor = 0x00000000L,
+        readerTextColor = 0x00000000L,
+        customThemeEnabled = false
     )
 )
 
@@ -126,6 +138,7 @@ class LocalReaderViewModel : ViewModel() {
     val uiState: StateFlow<LocalReaderUiState> = _uiState.asStateFlow()
 
     private var currentBookId: Int = 0
+    private var currentServerId: String = SettingsRepository.DEFAULT_SERVER_ID
     private var ttsController: TtsController? = null
     private var ttsQueue: List<TtsUtterance> = emptyList()
     private var ttsIndex = 0
@@ -137,6 +150,40 @@ class LocalReaderViewModel : ViewModel() {
         if (_uiState.value.isLoading && currentBookId == bookId) return
         currentBookId = bookId
         viewModelScope.launch {
+            currentServerId = SettingsRepository(context).activeLibraryServerId.first()
+            val dao = ReaderDatabase.get(context).readerDao()
+            if (dao.getProgress(currentServerId, bookId) == null) {
+                dao.saveProgress(
+                    ReadingProgressEntity(
+                        serverId = currentServerId,
+                        bookId = bookId,
+                        locatorJson = "",
+                        progression = 0.0,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            }
+            val detail = runCatching { bookRepository.getBookDetail(bookId).getOrNull() }.getOrNull()
+            val now = System.currentTimeMillis()
+            if (detail != null) {
+                val existingRecent = dao.getRecentEntry(currentServerId, bookId)
+                dao.upsertRecentEntry(
+                    RecentReadingEntity(
+                        serverId = currentServerId,
+                        bookId = bookId,
+                        title = detail.title,
+                        author = detail.authorSort.ifBlank { detail.authors.joinToString(", ") },
+                        cover = detail.cover,
+                        img = detail.img,
+                        thumb = detail.thumb,
+                        progression = dao.getProgress(currentServerId, bookId)?.progression ?: 0.0,
+                        updatedAt = now,
+                        sortIndex = now,
+                        pinned = existingRecent?.pinned ?: false,
+                        pinnedAt = existingRecent?.pinnedAt ?: 0L
+                    )
+                )
+            }
             _uiState.value = LocalReaderUiState(
                 isLoading = true,
                 statusMessage = "正在准备阅读源..."
@@ -148,14 +195,19 @@ class LocalReaderViewModel : ViewModel() {
                     }
                     cacheRepository.resolveReadableSource(context, book).fold(
                         onSuccess = { source ->
-                            val dao = ReaderDatabase.get(context).readerDao()
                             val settingsRepository = SettingsRepository(context)
                             val appTheme = settingsRepository.themeMode.first()
-                            val readerTheme = when (appTheme) {
-                                SettingsRepository.THEME_LIGHT -> ReaderTheme.LIGHT
-                                SettingsRepository.THEME_DARK -> ReaderTheme.DARK
-                                else -> settingsRepository.readerTheme.first().toReaderTheme()
-                            }
+                            val systemDark = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+                            val appDark = ThemePresets.isDark(appTheme, systemDark)
+                            val palette = ThemePresets.palette(
+                                mode = appTheme,
+                                systemDark = systemDark,
+                                dayPreset = settingsRepository.dayThemePreset.first(),
+                                nightPreset = settingsRepository.nightThemePreset.first(),
+                                customBackground = settingsRepository.dayCustomBackground.first(),
+                                customText = settingsRepository.dayCustomText.first()
+                            )
+                            val readerTheme = if (appDark) ReaderTheme.DARK else ReaderTheme.CUSTOM
                             val readerSettings = ReaderDisplaySettings(
                                 fontFamily = settingsRepository.readerFontFamily.first().toReaderFontFamily(),
                                 fontScale = settingsRepository.readerFontScale.first(),
@@ -165,16 +217,22 @@ class LocalReaderViewModel : ViewModel() {
                                 useSystemBrightness = settingsRepository.readerUseSystemBrightness.first(),
                                 theme = readerTheme,
                                 tapPageTurn = settingsRepository.readerTapPageTurn.first(),
-                                appDark = appTheme == SettingsRepository.THEME_DARK,
+                                appDark = appDark,
                                 pageTurnMode = settingsRepository.readerPageTurnMode.first().toReaderPageTurnMode(),
                                 pageMargins = settingsRepository.readerPageMargins.first(),
                                 paragraphSpacing = settingsRepository.readerParagraphSpacing.first(),
                                 publisherStyles = settingsRepository.readerPublisherStyles.first(),
+                                forcePublisherFonts = settingsRepository.readerForcePublisherFonts.first(),
                                 keepScreenOn = settingsRepository.readerKeepScreenOn.first(),
                                 pageAnimation = settingsRepository.readerPageAnimation.first().toReaderPageAnimation(),
+                                forceTapAnimation = settingsRepository.readerForceTapAnimation.first(),
                                 scrollTapPageTurn = settingsRepository.readerScrollTapPageTurn.first(),
                                 scrollKeepLine = settingsRepository.readerScrollKeepLine.first(),
-                                volumeKeyPageTurn = settingsRepository.readerVolumeKeyPageTurn.first()
+                                volumeKeyPageTurn = settingsRepository.readerVolumeKeyPageTurn.first(),
+                                letterSpacing = settingsRepository.readerLetterSpacing.first(),
+                                readerBackgroundColor = palette.background,
+                                readerTextColor = palette.text,
+                                customThemeEnabled = true
                             )
                             val ttsSettings = ReaderTtsState(
                                 speechRate = settingsRepository.ttsSpeechRate.first(),
@@ -183,8 +241,8 @@ class LocalReaderViewModel : ViewModel() {
                                 sleepEnabled = settingsRepository.ttsSleepEnabled.first(),
                                 sleepMinutes = settingsRepository.ttsSleepMinutes.first().coerceIn(5, 180)
                             )
-                            val bookmarks = dao.getBookmarks(bookId)
-                            val annotations = dao.getAnnotations(bookId)
+                            val bookmarks = dao.getBookmarks(currentServerId, bookId)
+                            val annotations = dao.getAnnotations(currentServerId, bookId)
                             val session = openReadiumSession(context, bookId, source.uri, readerSettings)
                             val tableOfContents = session.getOrNull()
                                 ?.let { ReadiumSessionStore.get(it)?.publication?.tableOfContents }
@@ -291,10 +349,12 @@ class LocalReaderViewModel : ViewModel() {
         return runCatching {
             val engine = ReadiumEngine(context)
             val dao = ReaderDatabase.get(context).readerDao()
-            val initialLocator = dao.getProgress(bookId)?.locatorJson?.let { json ->
+            val serverId = SettingsRepository(context).activeLibraryServerId.first()
+            val initialLocator = dao.getProgress(serverId, bookId)?.locatorJson?.let { json ->
                 runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
             }
-            val asset = if (uri.startsWith("file:")) {
+            val isRemote = !uri.startsWith("file:")
+            val asset = if (!isRemote) {
                 engine.assetRetriever.retrieve(File(URI(uri))).getOrNull()
             } else {
                 val absoluteUrl = AbsoluteUrl(uri) ?: error("无效的阅读地址")
@@ -303,6 +363,7 @@ class LocalReaderViewModel : ViewModel() {
 
             val publication = engine.publicationOpener.open(asset, allowUserInteraction = true).getOrNull()
                 ?: error("Readium 无法解析书籍")
+            val hasLargeEmbeddedFonts = isRemote && hasLargeEmbeddedFonts(publication)
             val sessionId = ReadiumSessionStore.nextId()
             val session = when {
                 publication.conformsTo(Publication.Profile.EPUB) || publication.readingOrder.allAreHtml -> {
@@ -311,6 +372,8 @@ class LocalReaderViewModel : ViewModel() {
                         bookId = bookId,
                         publication = publication,
                         initialLocator = initialLocator,
+                        isRemote = isRemote,
+                        hasLargeEmbeddedFonts = hasLargeEmbeddedFonts,
                         navigatorFactory = EpubNavigatorFactory(publication),
                         displaySettings = readerSettings
                     )
@@ -322,6 +385,8 @@ class LocalReaderViewModel : ViewModel() {
                         bookId = bookId,
                         publication = publication,
                         initialLocator = initialLocator,
+                        isRemote = isRemote,
+                        hasLargeEmbeddedFonts = false,
                         navigatorFactory = PdfNavigatorFactory(publication, pdfEngine),
                         pdfEngineProvider = pdfEngine,
                         displaySettings = readerSettings
@@ -333,6 +398,26 @@ class LocalReaderViewModel : ViewModel() {
                 }
             }
             ReadiumSessionStore.put(session)
+        }
+    }
+
+    private suspend fun hasLargeEmbeddedFonts(publication: Publication): Boolean {
+        return publication.resources.any { link ->
+            val href = link.href.toString().lowercase()
+            val mediaType = link.mediaType.toString().lowercase()
+            val isFont = href.endsWith(".ttf") || href.endsWith(".otf") || href.endsWith(".woff") || href.endsWith(".woff2") ||
+                mediaType.contains("font") || mediaType.contains("opentype") || mediaType.contains("truetype")
+            if (!isFont) {
+                false
+            } else {
+                publication.get(link)
+                    ?.properties()
+                    ?.getOrNull()
+                    ?.archive
+                    ?.entryLength
+                    ?.let { it >= LARGE_EMBEDDED_FONT_BYTES }
+                    ?: false
+            }
         }
     }
 
@@ -362,7 +447,7 @@ class LocalReaderViewModel : ViewModel() {
         viewModelScope.launch {
             val dao = ReaderDatabase.get(appContext ?: return@launch).readerDao()
             dao.deleteBookmark(bookmark)
-            _uiState.update { it.copy(bookmarks = dao.getBookmarks(bookId)) }
+            _uiState.update { it.copy(bookmarks = dao.getBookmarks(currentServerId, bookId)) }
         }
     }
 
@@ -373,7 +458,7 @@ class LocalReaderViewModel : ViewModel() {
         viewModelScope.launch {
             val dao = ReaderDatabase.get(context).readerDao()
             dao.renameBookmark(bookmark.id, normalized)
-            _uiState.update { it.copy(bookmarks = dao.getBookmarks(bookId)) }
+            _uiState.update { it.copy(bookmarks = dao.getBookmarks(currentServerId, bookId)) }
         }
     }
 
@@ -397,7 +482,7 @@ class LocalReaderViewModel : ViewModel() {
         viewModelScope.launch {
             val dao = ReaderDatabase.get(context).readerDao()
             dao.deleteAnnotation(annotation)
-            _uiState.update { it.copy(annotations = dao.getAnnotations(bookId)) }
+            _uiState.update { it.copy(annotations = dao.getAnnotations(currentServerId, bookId)) }
             _uiState.value.sessionId?.let { ReadiumUiEvents.emitAnnotationChanged(it) }
         }
     }
@@ -410,7 +495,7 @@ class LocalReaderViewModel : ViewModel() {
         viewModelScope.launch {
             val dao = ReaderDatabase.get(context).readerDao()
             dao.saveAnnotation(annotation.copy(note = normalized, updatedAt = System.currentTimeMillis()))
-            _uiState.update { it.copy(annotations = dao.getAnnotations(bookId)) }
+            _uiState.update { it.copy(annotations = dao.getAnnotations(currentServerId, bookId)) }
             _uiState.value.sessionId?.let { ReadiumUiEvents.emitAnnotationChanged(it) }
         }
     }
@@ -439,12 +524,19 @@ class LocalReaderViewModel : ViewModel() {
         pageTurnMode: ReaderPageTurnMode = _uiState.value.readerSettings.pageTurnMode,
         pageMargins: Float = _uiState.value.readerSettings.pageMargins,
         paragraphSpacing: Float = _uiState.value.readerSettings.paragraphSpacing,
+        letterSpacing: Float = _uiState.value.readerSettings.letterSpacing,
         publisherStyles: Boolean = _uiState.value.readerSettings.publisherStyles,
+        forcePublisherFonts: Boolean = _uiState.value.readerSettings.forcePublisherFonts,
         keepScreenOn: Boolean = _uiState.value.readerSettings.keepScreenOn,
         pageAnimation: ReaderPageAnimation = _uiState.value.readerSettings.pageAnimation,
+        forceTapAnimation: Boolean = _uiState.value.readerSettings.forceTapAnimation,
         scrollTapPageTurn: Boolean = _uiState.value.readerSettings.scrollTapPageTurn,
         scrollKeepLine: Boolean = _uiState.value.readerSettings.scrollKeepLine,
-        volumeKeyPageTurn: Boolean = _uiState.value.readerSettings.volumeKeyPageTurn
+        volumeKeyPageTurn: Boolean = _uiState.value.readerSettings.volumeKeyPageTurn,
+        readerBackgroundColor: Long = _uiState.value.readerSettings.readerBackgroundColor,
+        readerTextColor: Long = _uiState.value.readerSettings.readerTextColor,
+        customThemeEnabled: Boolean = _uiState.value.readerSettings.customThemeEnabled,
+        appDark: Boolean = _uiState.value.readerSettings.appDark
     ) {
         val settings = ReaderDisplaySettings(
             fontFamily = fontFamily,
@@ -455,16 +547,22 @@ class LocalReaderViewModel : ViewModel() {
             useSystemBrightness = useSystemBrightness,
             theme = theme,
             tapPageTurn = tapPageTurn,
-            appDark = _uiState.value.readerSettings.appDark,
+            appDark = appDark,
             pageTurnMode = pageTurnMode,
             pageMargins = pageMargins.coerceIn(0.5f, 2.0f),
             paragraphSpacing = paragraphSpacing.coerceIn(0.0f, 2.0f),
+            letterSpacing = letterSpacing.coerceIn(0f, 6f),
             publisherStyles = publisherStyles,
+            forcePublisherFonts = forcePublisherFonts,
             keepScreenOn = keepScreenOn,
             pageAnimation = pageAnimation,
+            forceTapAnimation = forceTapAnimation,
             scrollTapPageTurn = scrollTapPageTurn,
             scrollKeepLine = scrollKeepLine,
-            volumeKeyPageTurn = volumeKeyPageTurn
+            volumeKeyPageTurn = volumeKeyPageTurn,
+            readerBackgroundColor = readerBackgroundColor and 0xFFFFFF,
+            readerTextColor = readerTextColor and 0xFFFFFF,
+            customThemeEnabled = customThemeEnabled
         )
         _uiState.update { it.copy(readerSettings = settings) }
         _uiState.value.sessionId?.let { sessionId ->
@@ -483,12 +581,18 @@ class LocalReaderViewModel : ViewModel() {
                 pageTurnMode = settings.pageTurnMode.toStorageValue(),
                 pageMargins = settings.pageMargins,
                 paragraphSpacing = settings.paragraphSpacing,
+                letterSpacing = settings.letterSpacing,
                 publisherStyles = settings.publisherStyles,
+                forcePublisherFonts = settings.forcePublisherFonts,
                 keepScreenOn = settings.keepScreenOn,
                 pageAnimation = settings.pageAnimation.toStorageValue(),
+                forceTapAnimation = settings.forceTapAnimation,
                 scrollTapPageTurn = settings.scrollTapPageTurn,
                 scrollKeepLine = settings.scrollKeepLine,
-                volumeKeyPageTurn = settings.volumeKeyPageTurn
+                volumeKeyPageTurn = settings.volumeKeyPageTurn,
+                readerBackgroundColor = settings.readerBackgroundColor,
+                readerTextColor = settings.readerTextColor,
+                customThemeEnabled = settings.customThemeEnabled
             )
         }
     }
@@ -499,7 +603,11 @@ class LocalReaderViewModel : ViewModel() {
             ReaderTheme.SYSTEM -> ReaderTheme.LIGHT
             ReaderTheme.LIGHT -> ReaderTheme.SEPIA
             ReaderTheme.SEPIA -> ReaderTheme.DARK
-            ReaderTheme.DARK -> ReaderTheme.SYSTEM
+            ReaderTheme.DARK -> ReaderTheme.PINK
+            ReaderTheme.PINK -> ReaderTheme.BLUE
+            ReaderTheme.BLUE -> ReaderTheme.GREEN
+            ReaderTheme.GREEN -> ReaderTheme.SYSTEM
+            ReaderTheme.CUSTOM -> ReaderTheme.SYSTEM
         }
         updateReaderTheme(nextTheme)
     }
@@ -523,9 +631,29 @@ class LocalReaderViewModel : ViewModel() {
                 ReaderTheme.LIGHT -> SettingsRepository.THEME_LIGHT
                 ReaderTheme.DARK -> SettingsRepository.THEME_DARK
                 ReaderTheme.SEPIA -> null
+                ReaderTheme.PINK -> null
+                ReaderTheme.BLUE -> null
+                ReaderTheme.GREEN -> null
+                ReaderTheme.CUSTOM -> null
             }
             if (appTheme != null) SettingsRepository(context).saveThemeMode(appTheme)
         }
+    }
+
+    fun updateCustomThemeColors(backgroundColor: Long, textColor: Long) {
+        val current = _uiState.value.readerSettings
+        updateReaderSettings(
+            fontScale = current.fontScale,
+            lineHeight = current.lineHeight,
+            brightness = current.brightness,
+            scrollMode = current.scrollMode,
+            useSystemBrightness = current.useSystemBrightness,
+            theme = ReaderTheme.CUSTOM,
+            tapPageTurn = current.tapPageTurn,
+            readerBackgroundColor = backgroundColor,
+            readerTextColor = textColor,
+            customThemeEnabled = true
+        )
     }
 
     fun openSearch() {
@@ -654,7 +782,7 @@ class LocalReaderViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.update { it.copy(ttsState = it.ttsState.copy(isLoading = true, status = "正在准备朗读...")) }
             val session = ReadiumSessionStore.get(sessionId)
-            val currentProgression = ReaderDatabase.get(context).readerDao().getProgress(currentBookId)?.progression ?: 0.0
+            val currentProgression = ReaderDatabase.get(context).readerDao().getProgress(currentServerId, currentBookId)?.progression ?: 0.0
             val queue = session?.publication?.content()?.elements()
                 ?.filterIsInstance<Content.TextualElement>()
                 ?.flatMapIndexed { elementIndex, element ->
@@ -788,7 +916,7 @@ class LocalReaderViewModel : ViewModel() {
         val bookId = currentBookId
         viewModelScope.launch {
             val dao = ReaderDatabase.get(context).readerDao()
-            _uiState.update { it.copy(bookmarks = dao.getBookmarks(bookId)) }
+            _uiState.update { it.copy(bookmarks = dao.getBookmarks(currentServerId, bookId)) }
         }
     }
 
@@ -797,7 +925,7 @@ class LocalReaderViewModel : ViewModel() {
         val bookId = currentBookId
         viewModelScope.launch {
             val dao = ReaderDatabase.get(context).readerDao()
-            _uiState.update { it.copy(annotations = dao.getAnnotations(bookId)) }
+            _uiState.update { it.copy(annotations = dao.getAnnotations(currentServerId, bookId)) }
         }
     }
 }
@@ -826,6 +954,10 @@ private fun String.toReaderTheme(): ReaderTheme = when (this) {
     "light" -> ReaderTheme.LIGHT
     "sepia" -> ReaderTheme.SEPIA
     "dark" -> ReaderTheme.DARK
+    "pink" -> ReaderTheme.PINK
+    "blue" -> ReaderTheme.BLUE
+    "green" -> ReaderTheme.GREEN
+    "custom" -> ReaderTheme.CUSTOM
     else -> ReaderTheme.SYSTEM
 }
 
@@ -834,6 +966,10 @@ private fun ReaderTheme.toStorageValue(): String = when (this) {
     ReaderTheme.LIGHT -> "light"
     ReaderTheme.SEPIA -> "sepia"
     ReaderTheme.DARK -> "dark"
+    ReaderTheme.PINK -> "pink"
+    ReaderTheme.BLUE -> "blue"
+    ReaderTheme.GREEN -> "green"
+    ReaderTheme.CUSTOM -> "custom"
 }
 
 private fun String.toReaderFontFamily(): ReaderFontFamily = when (this) {
@@ -853,6 +989,7 @@ private fun ReaderFontFamily.toStorageValue(): String = when (this) {
 private fun String.toReaderPageAnimation(): ReaderPageAnimation = when (this) {
     "slide" -> ReaderPageAnimation.SLIDE
     "cover" -> ReaderPageAnimation.COVER
+    "override" -> ReaderPageAnimation.OVERRIDE
     "none" -> ReaderPageAnimation.NONE
     else -> ReaderPageAnimation.SMOOTH
 }
@@ -861,6 +998,7 @@ private fun ReaderPageAnimation.toStorageValue(): String = when (this) {
     ReaderPageAnimation.SMOOTH -> "smooth"
     ReaderPageAnimation.SLIDE -> "slide"
     ReaderPageAnimation.COVER -> "cover"
+    ReaderPageAnimation.OVERRIDE -> "override"
     ReaderPageAnimation.NONE -> "none"
 }
 

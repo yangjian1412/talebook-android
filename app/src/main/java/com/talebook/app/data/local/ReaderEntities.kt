@@ -4,9 +4,13 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "reading_progress")
+@Entity(
+    tableName = "reading_progress",
+    primaryKeys = ["serverId", "bookId"]
+)
 data class ReadingProgressEntity(
-    @PrimaryKey val bookId: Int,
+    val serverId: String = "default",
+    val bookId: Int,
     val locatorJson: String,
     val progression: Double,
     val updatedAt: Long
@@ -14,10 +18,11 @@ data class ReadingProgressEntity(
 
 @Entity(
     tableName = "reader_bookmarks",
-    indices = [Index(value = ["bookId", "createdAt"])]
+    indices = [Index(value = ["serverId", "bookId", "createdAt"])]
 )
 data class ReaderBookmarkEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val serverId: String = "default",
     val bookId: Int,
     val title: String,
     val locatorJson: String,
@@ -27,10 +32,11 @@ data class ReaderBookmarkEntity(
 
 @Entity(
     tableName = "reader_annotations",
-    indices = [Index(value = ["bookId", "createdAt"])]
+    indices = [Index(value = ["serverId", "bookId", "createdAt"])]
 )
 data class ReaderAnnotationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val serverId: String = "default",
     val bookId: Int,
     val locatorJson: String,
     val selectedText: String,
@@ -40,9 +46,13 @@ data class ReaderAnnotationEntity(
     val updatedAt: Long
 )
 
-@Entity(tableName = "reader_cache")
+@Entity(
+    tableName = "reader_cache",
+    primaryKeys = ["serverId", "bookId"]
+)
 data class ReaderCacheEntity(
-    @PrimaryKey val bookId: Int,
+    val serverId: String = "default",
+    val bookId: Int,
     val title: String,
     val format: String,
     val filePath: String,
@@ -50,4 +60,24 @@ data class ReaderCacheEntity(
     val sourceUrl: String,
     val createdAt: Long,
     val lastAccessedAt: Long
+)
+
+@Entity(
+    tableName = "recent_reading",
+    primaryKeys = ["serverId", "bookId"],
+    indices = [Index(value = ["serverId", "pinned", "pinnedAt", "sortIndex"])]
+)
+data class RecentReadingEntity(
+    val serverId: String = "default",
+    val bookId: Int,
+    val title: String,
+    val author: String,
+    val cover: String,
+    val img: String,
+    val thumb: String,
+    val progression: Double,
+    val updatedAt: Long,
+    val sortIndex: Long,
+    val pinned: Boolean = false,
+    val pinnedAt: Long = 0L
 )

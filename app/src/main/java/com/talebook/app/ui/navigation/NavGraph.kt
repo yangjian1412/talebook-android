@@ -1,9 +1,11 @@
 ﻿package com.talebook.app.ui.navigation
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -13,11 +15,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.ui.screens.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun NavGraph(navController: NavHostController = rememberNavController()) {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
+    val scope = rememberCoroutineScope()
     val isLoggedIn by settingsRepository.isLoggedIn.collectAsState(initial = false)
     val readerMode by settingsRepository.readerMode.collectAsState(initial = SettingsRepository.READER_LOCAL)
 
@@ -42,11 +46,30 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
         }
 
         composable("home") {
-            HomeScreen(
+            MainTabsScreen(
+                settingsRepository = settingsRepository,
                 onBookClick = { bookId -> navController.navigate("book/$bookId") },
+                onReadBook = { bookId ->
+                    if (readerMode == SettingsRepository.READER_LOCAL) {
+                        navController.navigate("local_reader/$bookId")
+                    } else {
+                        navController.navigate("reader/$bookId")
+                    }
+                },
                 onNavigateSearch = { navController.navigate("search") },
                 onNavigateLibrary = { navController.navigate("library") },
-                onNavigateSettings = { navController.navigate("settings") }
+                onLogout = {
+                    navController.navigate("login") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onOpenCacheList = { navController.navigate("cached_books") },
+                onOpenNotesManagement = {
+                    scope.launch {
+                        settingsRepository.saveStartTab(SettingsRepository.START_TAB_SETTINGS)
+                        navController.navigate("notes_management")
+                    }
+                }
             )
         }
 
@@ -97,10 +120,18 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
             )
         }
 
-        composable("local_reader/{bookId}", arguments = listOf(navArgument("bookId") { type = NavType.IntType })) {
+        composable(
+            "local_reader/{bookId}?locator={locator}",
+            arguments = listOf(
+                navArgument("bookId") { type = NavType.IntType },
+                navArgument("locator") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) {
             val bookId = it.arguments?.getInt("bookId") ?: return@composable
+            val locator = it.arguments?.getString("locator")?.takeIf { value -> value.isNotBlank() }
             LocalReaderScreen(
                 bookId = bookId,
+                initialLocatorJson = locator,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -114,7 +145,13 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onOpenCacheList = { navController.navigate("cached_books") }
+                onOpenCacheList = { navController.navigate("cached_books") },
+                onOpenNotesManagement = {
+                    scope.launch {
+                        settingsRepository.saveStartTab(SettingsRepository.START_TAB_SETTINGS)
+                        navController.navigate("notes_management")
+                    }
+                }
             )
         }
 
@@ -123,6 +160,22 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
                 onBack = { navController.popBackStack() },
                 onOpenBookDetail = { bookId -> navController.navigate("book/$bookId") },
                 onReadLocalBook = { bookId -> navController.navigate("local_reader/$bookId") }
+            )
+        }
+
+        composable("notes_management") {
+            NotesManagementScreen(
+                onBack = {
+                    scope.launch {
+                        settingsRepository.saveStartTab(SettingsRepository.START_TAB_SETTINGS)
+                        navController.navigate("home") {
+                            popUpTo("home") { inclusive = true }
+                        }
+                    }
+                },
+                onOpenReaderAtNote = { bookId, locatorJson ->
+                    navController.navigate("local_reader/$bookId?locator=${Uri.encode(locatorJson)}")
+                }
             )
         }
     }
