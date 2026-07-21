@@ -1,0 +1,488 @@
+﻿package com.talebook.app.ui.screens
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
+import com.talebook.app.data.api.RetrofitClient
+import com.talebook.app.data.repository.AuthRepository
+import com.talebook.app.data.repository.ReaderBackupRepository
+import com.talebook.app.data.repository.ReaderCacheRepository
+import com.talebook.app.data.repository.SettingsRepository
+import kotlinx.coroutines.launch
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    settingsRepository: SettingsRepository,
+    onBack: () -> Unit,
+    onLogout: () -> Unit,
+    onOpenCacheList: () -> Unit = {}
+) {
+    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "https://book.liufenyi.xyz:9973")
+    val nickname by settingsRepository.nickname.collectAsState(initial = "")
+    val loginMode by settingsRepository.loginMode.collectAsState(initial = "")
+    val themeMode by settingsRepository.themeMode.collectAsState(initial = SettingsRepository.THEME_AUTO)
+    val readerMode by settingsRepository.readerMode.collectAsState(initial = SettingsRepository.READER_LOCAL)
+    val cacheLimitMb by settingsRepository.readerCacheLimitMb.collectAsState(initial = SettingsRepository.DEFAULT_CACHE_LIMIT_MB)
+    val autoCacheOnWifi by settingsRepository.readerAutoCacheOnWifi.collectAsState(initial = false)
+    val context = LocalContext.current
+    var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
+    var editCacheLimit by remember(cacheLimitMb) { mutableStateOf(cacheLimitMb.toString()) }
+    var saved by remember { mutableStateOf(false) }
+    var cacheMessage by remember { mutableStateOf<String?>(null) }
+    var cacheSizeText by remember { mutableStateOf("未统计") }
+    var backupMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
+    val authRepository = remember { AuthRepository() }
+    val readerCacheRepository = remember { ReaderCacheRepository() }
+    val readerBackupRepository = remember { ReaderBackupRepository() }
+
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("确认登出？") },
+            text = { Text("登出后将清除当前会话，需要重新登录才能访问书籍。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        scope.launch {
+                            authRepository.signOut()
+                            settingsRepository.clearLogin()
+                            onLogout()
+                        }
+                    }
+                ) {
+                    Text("登出", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = { Text("确认导入阅读数据？") },
+            text = { Text("将从 Download/talebook/ 导入最近一次备份。已有阅读进度可能被覆盖，书签和笔记会追加导入。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showImportDialog = false
+                        scope.launch {
+                            readerBackupRepository.importLatestFromDownloads(context.applicationContext).fold(
+                                onSuccess = { msg -> backupMessage = msg },
+                                onFailure = { e -> backupMessage = e.message ?: "导入失败" }
+                            )
+                        }
+                    }
+                ) { Text("导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("设置") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
+            // 当前用户
+            if (loginMode.isNotEmpty()) {
+                Text(
+                    text = "当前账号",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = nickname.ifBlank { "访客" },
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            text = when (loginMode) {
+                                "code" -> "访问码登录"
+                                "password" -> "账号密码登录"
+                                else -> ""
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showLogoutDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Logout, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("登出")
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+
+            // 服务器设置
+            Text(
+                text = "服务器设置",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = editUrl,
+                onValueChange = { editUrl = it; saved = false },
+                label = { Text("服务器地址") },
+                placeholder = { Text("https://book.liufenyi.xyz:9973") },
+                leadingIcon = {
+                    Icon(Icons.Default.Link, contentDescription = null)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    RetrofitClient.updateBaseUrl(editUrl)
+                    scope.launch {
+                        settingsRepository.saveServerUrl(editUrl)
+                        saved = true
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("保存")
+            }
+
+            if (saved) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "已保存",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "阅读器",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Column(modifier = Modifier.selectableGroup()) {
+                ReaderOptionRow(
+                    selected = readerMode == SettingsRepository.READER_LOCAL,
+                    icon = Icons.Default.MenuBook,
+                    label = "使用本地阅读器",
+                    description = "Readium 内核，支持离线、进度、书签、笔记、TTS",
+                    onSelect = {
+                        scope.launch { settingsRepository.saveReaderMode(SettingsRepository.READER_LOCAL) }
+                    }
+                )
+                ReaderOptionRow(
+                    selected = readerMode == SettingsRepository.READER_ONLINE,
+                    icon = Icons.Default.Public,
+                    label = "使用在线阅读器",
+                    description = "使用 talebook 网页阅读器作为兜底",
+                    onSelect = {
+                        scope.launch { settingsRepository.saveReaderMode(SettingsRepository.READER_ONLINE) }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "缓存管理",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = editCacheLimit,
+                onValueChange = { editCacheLimit = it.filter { ch -> ch.isDigit() }.take(5) },
+                label = { Text("本地阅读缓存上限 (MB)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("当前缓存占用：$cacheSizeText", style = MaterialTheme.typography.bodySmall)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            settingsRepository.saveReaderCacheLimitMb(editCacheLimit.toIntOrNull() ?: SettingsRepository.DEFAULT_CACHE_LIMIT_MB)
+                            cacheMessage = "缓存上限已保存"
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("保存上限") }
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            val removed = readerCacheRepository.clearAll(context.applicationContext)
+                            cacheMessage = "已清理 ${String.format(java.util.Locale.US, "%.1f", removed / 1024.0 / 1024.0)} MB"
+                            cacheSizeText = "0.0 MB"
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("一键清理") }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val size = readerCacheRepository.totalSizeBytes(context.applicationContext)
+                        cacheSizeText = "${String.format(java.util.Locale.US, "%.1f", size / 1024.0 / 1024.0)} MB"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("统计缓存占用") }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onOpenCacheList,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.MenuBook, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("查看已缓存")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Wi-Fi 下自动缓存", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "打开本地阅读器时，如果当前是 Wi-Fi，会后台缓存本书",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = autoCacheOnWifi,
+                    onCheckedChange = { enabled ->
+                        scope.launch { settingsRepository.saveReaderAutoCacheOnWifi(enabled) }
+                    },
+                    modifier = Modifier.height(32.dp).scale(0.82f)
+                )
+            }
+            cacheMessage?.let { msg ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = msg,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "阅读数据",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        readerBackupRepository.exportToDownloads(context.applicationContext).fold(
+                            onSuccess = { path -> backupMessage = "已导出到 $path" },
+                            onFailure = { e -> backupMessage = e.message ?: "导出失败" }
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("导出阅读记录 / 书签 / 笔记")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { showImportDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("导入最近一次阅读数据备份")
+            }
+            backupMessage?.let { msg ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = msg,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // 外观（夜间模式）
+            Text(
+                text = "外观",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Column(modifier = Modifier.selectableGroup()) {
+                ThemeOptionRow(
+                    selected = themeMode == SettingsRepository.THEME_LIGHT,
+                    icon = Icons.Default.LightMode,
+                    label = "白天",
+                    onSelect = {
+                        scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_LIGHT) }
+                    }
+                )
+                ThemeOptionRow(
+                    selected = themeMode == SettingsRepository.THEME_DARK,
+                    icon = Icons.Default.DarkMode,
+                    label = "夜间",
+                    onSelect = {
+                        scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_DARK) }
+                    }
+                )
+                ThemeOptionRow(
+                    selected = themeMode == SettingsRepository.THEME_AUTO,
+                    icon = Icons.Default.Brightness6,
+                    label = "自动（跟随系统）",
+                    onSelect = {
+                        scope.launch { settingsRepository.saveThemeMode(SettingsRepository.THEME_AUTO) }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            Text(
+                text = "关于",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "Tale Book v2.0.0",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "TaleBook 安卓客户端",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderOptionRow(
+    selected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    description: String,
+    onSelect: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                onClick = onSelect,
+                role = Role.RadioButton
+            )
+            .padding(vertical = 8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(icon, contentDescription = null)
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ThemeOptionRow(
+    selected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onSelect: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                onClick = onSelect,
+                role = Role.RadioButton
+            )
+            .padding(vertical = 8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(icon, contentDescription = null)
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+private fun Double.cacheMbText(): String = String.format(java.util.Locale.US, "%.1f", this)
