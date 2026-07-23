@@ -1,8 +1,12 @@
 package com.talebook.app.ui.screens
 
+import com.talebook.app.MainActivity
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,12 +22,22 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
@@ -53,6 +67,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,14 +76,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.talebook.app.reader.ReaderBarsController
 import com.talebook.app.reader.ReadiumHostFragment
+import com.talebook.app.data.local.RecentReadingEntity
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.ReaderFontFamily
 import com.talebook.app.reader.ReaderTheme
@@ -81,7 +101,7 @@ import com.talebook.app.viewmodel.LocalReaderViewModel
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.View
-import android.view.WindowInsets
+import android.view.WindowInsets as AndroidWindowInsets
 import android.widget.FrameLayout
 import kotlinx.coroutines.launch
 import java.io.File
@@ -89,22 +109,29 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LocalReaderScreen(
-    bookId: Int,
+    bookId: Int? = null,
+    localBookId: Long? = null,
     initialLocatorJson: String? = null,
     onBack: () -> Unit,
+    onOpenLogin: (Int) -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     viewModel: LocalReaderViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val settingsRepository = remember(context.applicationContext) { SettingsRepository(context.applicationContext) }
+    val skipAuth by settingsRepository.skipAuth.collectAsState(initial = false)
     val appThemeMode by settingsRepository.themeMode.collectAsState(initial = SettingsRepository.THEME_AUTO)
-    val dayPreset by settingsRepository.dayThemePreset.collectAsState(initial = ThemePresets.DAY_WHITE)
+    val dayPreset by settingsRepository.dayThemePreset.collectAsState(initial = ThemePresets.DAY_SYSTEM)
     val nightPreset by settingsRepository.nightThemePreset.collectAsState(initial = ThemePresets.NIGHT_CHARCOAL)
     val customBackground by settingsRepository.dayCustomBackground.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.background)
     val customText by settingsRepository.dayCustomText.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text)
+    val hideStatusBarInReader by settingsRepository.readerHideStatusBarInReader.collectAsState(initial = false)
+    val hideToolbarLabels by settingsRepository.readerHideToolbarLabels.collectAsState(initial = true)
+    val pageMarginSeparateMode by settingsRepository.readerPageMarginSeparateMode.collectAsState(initial = false)
     val systemDark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
-    var barsVisible by remember { mutableStateOf(false) }
+    var barsVisible by ReaderBarsController.barsVisible
     var showSearchDialog by remember { mutableStateOf(false) }
     var showBookmarksDialog by remember { mutableStateOf(false) }
     var showTocDialog by remember { mutableStateOf(false) }
@@ -116,14 +143,15 @@ fun LocalReaderScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
     var showCustomThemeDialog by remember { mutableStateOf(false) }
+    var showPageMarginDialog by remember { mutableStateOf(false) }
     var previewBackground by remember(customBackground) { mutableStateOf(customBackground) }
     var previewText by remember(customText) { mutableStateOf(customText) }
     var showProgressJumpDialog by remember { mutableStateOf(false) }
     var progressJumpText by remember { mutableStateOf("") }
     var pageJumpText by remember { mutableStateOf("") }
     var progression by remember { mutableStateOf(0.0) }
-    var locatorBeforeChrome by remember { mutableStateOf<String?>(null) }
     var initialLocatorConsumed by remember(bookId, initialLocatorJson) { mutableStateOf(false) }
+    var readerSafeTopPadding by remember { mutableStateOf(0.dp) }
     val readerSettings = uiState.readerSettings
     val effectiveDark = ThemePresets.isDark(appThemeMode, systemDark)
     val selectedReaderPalette = if (effectiveDark) {
@@ -141,14 +169,15 @@ fun LocalReaderScreen(
         }
     }
     fun applyReaderPalette(palette: ReaderThemePalette, dark: Boolean = effectiveDark) {
+        val current = uiState.readerSettings
         viewModel.updateReaderSettings(
-            fontScale = readerSettings.fontScale,
-            lineHeight = readerSettings.lineHeight,
-            brightness = readerSettings.brightness,
-            scrollMode = readerSettings.scrollMode,
-            useSystemBrightness = readerSettings.useSystemBrightness,
+            fontScale = current.fontScale,
+            lineHeight = current.lineHeight,
+            brightness = current.brightness,
+            scrollMode = current.scrollMode,
+            useSystemBrightness = current.useSystemBrightness,
             theme = if (dark) ReaderTheme.DARK else ReaderTheme.CUSTOM,
-            tapPageTurn = readerSettings.tapPageTurn,
+            tapPageTurn = current.tapPageTurn,
             readerBackgroundColor = palette.background,
             readerTextColor = palette.text,
             customThemeEnabled = true,
@@ -156,8 +185,27 @@ fun LocalReaderScreen(
         )
     }
 
-    LaunchedEffect(uiState.sessionId, appThemeMode, systemDark, dayPreset, nightPreset, customBackground, customText) {
-        if (uiState.sessionId != null) applyReaderPalette(selectedReaderPalette)
+    fun applyReaderTheme() {
+        val current = uiState.readerSettings
+        viewModel.updateReaderSettings(
+            fontScale = current.fontScale,
+            lineHeight = current.lineHeight,
+            brightness = current.brightness,
+            scrollMode = current.scrollMode,
+            useSystemBrightness = current.useSystemBrightness,
+            theme = current.theme,
+            tapPageTurn = current.tapPageTurn,
+            readerBackgroundColor = current.readerBackgroundColor,
+            readerTextColor = current.readerTextColor,
+            customThemeEnabled = current.customThemeEnabled,
+            appDark = effectiveDark
+        )
+    }
+
+    LaunchedEffect(uiState.sessionId) {
+        if (uiState.sessionId != null) {
+            applyReaderTheme()
+        }
     }
     val activity = context.findFragmentActivity()
     val leaveReader = remember(activity, onBack) {
@@ -167,12 +215,31 @@ fun LocalReaderScreen(
         }
     }
 
-    DisposableEffect(activity) {
+    DisposableEffect(activity, hideStatusBarInReader) {
+        if (hideStatusBarInReader) {
+            activity?.hideReaderStatusBar()
+        } else {
+            activity?.showSystemBarsAfterReader()
+        }
         onDispose { activity?.showSystemBarsAfterReader() }
     }
 
-    LaunchedEffect(bookId) {
-        viewModel.load(context.applicationContext, bookId)
+    DisposableEffect(activity, readerSettings.volumeKeyPageTurn) {
+        (activity as? MainActivity)?.volumeKeyPageTurnEnabled = readerSettings.volumeKeyPageTurn
+        onDispose { (activity as? MainActivity)?.volumeKeyPageTurnEnabled = false }
+    }
+
+    LaunchedEffect(activity, uiState.sessionId, readerSettings.scrollMode) {
+        val act = activity as? MainActivity ?: return@LaunchedEffect
+        act.currentReaderSessionId = uiState.sessionId
+        act.currentReaderScrollMode = readerSettings.scrollMode
+    }
+
+    LaunchedEffect(bookId, localBookId) {
+        when {
+            localBookId != null -> viewModel.loadLocalBook(context.applicationContext, localBookId)
+            bookId != null -> viewModel.load(context.applicationContext, bookId)
+        }
     }
 
     LaunchedEffect(uiState.sessionId, initialLocatorJson) {
@@ -190,18 +257,24 @@ fun LocalReaderScreen(
 
     LaunchedEffect(uiState.sessionId) {
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
-        ReadiumUiEvents.centerTaps.collect { (tappedSessionId, locatorJson) ->
-            if (tappedSessionId == sessionId) {
-                locatorBeforeChrome = locatorJson
-                barsVisible = !barsVisible
+        ReadiumUiEvents.progress.collect { (targetSessionId, _) ->
+            if (targetSessionId == sessionId) {
+                ReaderBarsController.hide()
             }
         }
     }
 
-    LaunchedEffect(barsVisible, locatorBeforeChrome, uiState.sessionId) {
+    LaunchedEffect(uiState.sessionId) {
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
-        val locatorJson = locatorBeforeChrome ?: return@LaunchedEffect
-        ReadiumUiEvents.emitGoToLocator(sessionId, locatorJson)
+        ReadiumUiEvents.centerTaps.collect { (tappedSessionId, locatorJson) ->
+            if (tappedSessionId == sessionId) {
+                val wasVisible = barsVisible
+                ReaderBarsController.toggle()
+                if (wasVisible) {
+                    ReadiumUiEvents.emitGoToLocator(sessionId, locatorJson)
+                }
+            }
+        }
     }
 
     LaunchedEffect(uiState.sessionId) {
@@ -225,12 +298,48 @@ fun LocalReaderScreen(
         }
     }
 
-    val currentReaderBackgroundLong = readerSettings.readerBackgroundColor.takeIf { it != 0x00000000L } ?: selectedReaderPalette.background
+    val currentReaderBackgroundLong = if (readerSettings.readerBackgroundColor != 0L) {
+        readerSettings.readerBackgroundColor
+    } else {
+        if (effectiveDark) {
+            ThemePresets.night.first { it.id == ThemePresets.NIGHT_SYSTEM }.background
+        } else {
+            ThemePresets.day.first { it.id == ThemePresets.DAY_SYSTEM }.background
+        }
+    }
     val currentReaderBackground = currentReaderBackgroundLong.toColor()
+    val currentReaderTextLong = if (readerSettings.readerTextColor != 0L) {
+        readerSettings.readerTextColor
+    } else {
+        if (effectiveDark) {
+            ThemePresets.night.first { it.id == ThemePresets.NIGHT_SYSTEM }.text
+        } else {
+            ThemePresets.day.first { it.id == ThemePresets.DAY_SYSTEM }.text
+        }
+    }
+    val currentReaderText = currentReaderTextLong.toColor()
+    val topBarColor = if (barsVisible) MaterialTheme.colorScheme.surface else currentReaderBackground
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    val candidateSafeTop = if (statusBarTop > cutoutTop) statusBarTop else cutoutTop
+    LaunchedEffect(candidateSafeTop) {
+        if (candidateSafeTop > readerSafeTopPadding) {
+            readerSafeTopPadding = candidateSafeTop
+        }
+    }
+    SideEffect {
+        activity?.window?.statusBarColor = topBarColor.toArgb()
+    }
 
-    Box(modifier = Modifier.fillMaxSize().background(currentReaderBackground)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(currentReaderBackground)
+    ) {
         Box(
-            modifier = Modifier.fillMaxSize().background(currentReaderBackground)
+            modifier = Modifier
+                .fillMaxSize()
+                .background(currentReaderBackground)
         ) {
             when {
                 uiState.isLoading -> {
@@ -244,15 +353,45 @@ fun LocalReaderScreen(
                     }
                 }
                 uiState.error != null -> {
+                    val errMsg = uiState.error ?: "加载失败"
+                    val authNeeded = errMsg.contains("登录") || errMsg.contains("访问受限")
+                    val isRemote = !uiState.isCached && bookId != null && localBookId == null
                     Column(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(uiState.error ?: "加载失败", color = MaterialTheme.colorScheme.error)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(onClick = { viewModel.load(context.applicationContext, bookId) }) {
+                        Text(errMsg, color = MaterialTheme.colorScheme.error)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (isRemote && (authNeeded || errMsg.contains("无法连接"))) {
+                            Text(
+                                text = "您可能需要配置服务器或登录后再次尝试。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    if (skipAuth) {
+                                        onOpenSettings()
+                                    } else {
+                                        onOpenLogin(bookId)
+                                    }
+                                }
+                            ) {
+                                Text(if (skipAuth) "设置书库与登录" else "配置服务器与登录")
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                        Button(onClick = {
+                            val id = bookId
+                            val localId = localBookId
+                            when {
+                                localId != null -> viewModel.loadLocalBook(context.applicationContext, localId)
+                                id != null -> viewModel.load(context.applicationContext, id)
+                            }
+                        }) {
                             Text("重试")
                         }
                     }
@@ -266,13 +405,11 @@ fun LocalReaderScreen(
                             AndroidView(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(currentReaderBackground)
                                     .padding(
-                                        PaddingValues(
-                                            top = if (barsVisible) 64.dp else 0.dp,
-                                            bottom = if (barsVisible) 74.dp else 0.dp
-                                        )
-                                    ),
+                                        top = if (readerSettings.scrollMode) 8.dp else readerSafeTopPadding + 16.dp,
+                                        bottom = 56.dp
+                                    )
+                                    .background(currentReaderBackground),
                                 factory = { ctx ->
                                     FrameLayout(ctx).apply {
                                         id = containerId
@@ -343,6 +480,9 @@ fun LocalReaderScreen(
                 ReaderBottomBar(
                     progression = progression,
                     darkMode = effectiveDark,
+                    showTime = hideStatusBarInReader,
+                    showLabels = !hideToolbarLabels,
+                    contentColor = currentReaderText,
                     onToc = { showTocDialog = true },
                     onToggleTheme = {
                         val targetDark = !effectiveDark
@@ -363,17 +503,22 @@ fun LocalReaderScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
                 )
             }
             if (!barsVisible && uiState.sessionId != null) {
                 ReaderProgressOverlay(
                     progression = progression,
+                    showTime = hideStatusBarInReader,
+                    contentColor = currentReaderText,
                     onClick = {
                         progressJumpText = ((progression * 100).toInt()).toString()
                         pageJumpText = ""
                         showProgressJumpDialog = true
                     },
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
                 )
             }
         }
@@ -382,30 +527,36 @@ fun LocalReaderScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+                color = topBarColor
             ) {
-                TopAppBar(
-                    title = { Text(uiState.title.ifBlank { "本地阅读器" }, maxLines = 1) },
-                    navigationIcon = {
-                        IconButton(onClick = leaveReader) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                Column {
+                    Spacer(modifier = Modifier.height(statusBarTop))
+                    TopAppBar(
+                        windowInsets = WindowInsets(0.dp),
+                        title = { Text(uiState.title.ifBlank { "本地阅读器" }, maxLines = 1) },
+                        navigationIcon = {
+                            IconButton(onClick = leaveReader) {
+                                Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = { showBookmarksDialog = true }) {
+                                Icon(Icons.Default.BookmarkAdd, contentDescription = "书签")
+                            }
+                            IconButton(onClick = { showSearchDialog = true }) {
+                                Icon(Icons.Default.Search, contentDescription = "搜索")
+                            }
+                            if (uiState.sourceKind != RecentReadingEntity.SOURCE_KIND_LOCAL) {
+                                IconButton(
+                                    onClick = { viewModel.cacheCurrentBook(context.applicationContext) },
+                                    enabled = !uiState.isCached && !uiState.isCaching
+                                ) {
+                                    Icon(Icons.Default.CloudDownload, contentDescription = "缓存本书")
+                                }
+                            }
                         }
-                    },
-                    actions = {
-                        IconButton(onClick = { showBookmarksDialog = true }) {
-                            Icon(Icons.Default.BookmarkAdd, contentDescription = "书签")
-                        }
-                        IconButton(onClick = { showSearchDialog = true }) {
-                            Icon(Icons.Default.Search, contentDescription = "搜索")
-                        }
-                        IconButton(
-                            onClick = { viewModel.cacheCurrentBook(context.applicationContext) },
-                            enabled = !uiState.isCached && !uiState.isCaching
-                        ) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = "缓存本书")
-                        }
-                    }
-                )
+                    )
+                }
             }
         }
         if (uiState.ttsState.isPlaying || uiState.ttsState.isPaused) {
@@ -634,7 +785,10 @@ fun LocalReaderScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -694,20 +848,49 @@ fun LocalReaderScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("页边距 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMargins)}")
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("页边距")
+                            if (pageMarginSeparateMode) {
+                                Text(
+                                    text = "左 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMarginHorizontal)} · 右 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMarginHorizontal)} · 上 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMarginVertical)} · 下 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMarginVertical)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                Text(
+                                    text = "${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMargins)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        TextButton(onClick = { showPageMarginDialog = true }) { Text("分开设置") }
                         TextButton(
                             onClick = {
-                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageMargins = 1.0f)
+                                viewModel.updateReaderSettings(
+                                    fontScale = readerSettings.fontScale,
+                                    lineHeight = readerSettings.lineHeight,
+                                    brightness = readerSettings.brightness,
+                                    scrollMode = readerSettings.scrollMode,
+                                    useSystemBrightness = readerSettings.useSystemBrightness,
+                                    theme = readerSettings.theme,
+                                    tapPageTurn = readerSettings.tapPageTurn,
+                                    pageMargins = 1.0f,
+                                    pageMarginHorizontal = 1.0f,
+                                    pageMarginVertical = 1.0f
+                                )
                             }
                         ) { Text("默认") }
                     }
-                    CompactSlider(
-                        value = readerSettings.pageMargins,
-                        onValueChange = {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageMargins = it)
-                        },
-                        valueRange = 0.5f..2.0f
-                    )
+                    if (!pageMarginSeparateMode) {
+                        CompactSlider(
+                            value = readerSettings.pageMargins,
+                            onValueChange = {
+                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageMargins = it, pageMarginHorizontal = it, pageMarginVertical = it)
+                            },
+                            valueRange = 0.5f..2.0f
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -812,6 +995,48 @@ fun LocalReaderScreen(
         )
     }
 
+    if (showPageMarginDialog) {
+        var localH by remember(readerSettings.pageMarginHorizontal) { mutableStateOf(readerSettings.pageMarginHorizontal) }
+        var localV by remember(readerSettings.pageMarginVertical) { mutableStateOf(readerSettings.pageMarginVertical) }
+        AlertDialog(
+            onDismissRequest = { showPageMarginDialog = false },
+            title = { Text("页边距分开设置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("左右 ${String.format(java.util.Locale.US, "%.2f", localH)}")
+                        TextButton(onClick = { localH = 1.0f }) { Text("默认") }
+                    }
+                    CompactSlider(value = localH, onValueChange = { localH = it }, valueRange = 0.5f..2.0f)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("上下 ${String.format(java.util.Locale.US, "%.2f", localV)}")
+                        TextButton(onClick = { localV = 1.0f }) { Text("默认") }
+                    }
+                    CompactSlider(value = localV, onValueChange = { localV = it }, valueRange = 0.5f..2.0f)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateReaderSettings(
+                        fontScale = readerSettings.fontScale,
+                        lineHeight = readerSettings.lineHeight,
+                        brightness = readerSettings.brightness,
+                        scrollMode = readerSettings.scrollMode,
+                        useSystemBrightness = readerSettings.useSystemBrightness,
+                        theme = readerSettings.theme,
+                        tapPageTurn = readerSettings.tapPageTurn,
+                        pageMarginHorizontal = localH,
+                        pageMarginVertical = localV
+                    )
+                    showPageMarginDialog = false
+                }) { Text("完成") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPageMarginDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
     if (showCustomThemeDialog) {
         AlertDialog(
             onDismissRequest = { showCustomThemeDialog = false },
@@ -889,7 +1114,10 @@ fun LocalReaderScreen(
                 }
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
                     Text("字体")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         ReaderOptionChip("默认", readerSettings.fontFamily == ReaderFontFamily.DEFAULT) {
@@ -943,16 +1171,40 @@ fun LocalReaderScreen(
                         },
                         valueRange = 0.0f..2.0f
                     )
+                    var showVolumeKeyInfo by remember { mutableStateOf(false) }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("音量键翻页")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("音量键翻页")
+                            Text(
+                                text = "注意",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clickable { showVolumeKeyInfo = true }
+                                    .padding(vertical = 2.dp)
+                            )
+                        }
                         CompactSwitch(
                             checked = readerSettings.volumeKeyPageTurn,
                             onCheckedChange = {
                                 viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, volumeKeyPageTurn = it)
+                            }
+                        )
+                    }
+                    if (showVolumeKeyInfo) {
+                        AlertDialog(
+                            onDismissRequest = { showVolumeKeyInfo = false },
+                            title = { Text("音量键翻页") },
+                            text = { Text("开启后，音量上键 = 上一页，音量下键 = 下一页。仅在翻页模式生效，滚动模式按音量键会提示。仅在阅读器中屏蔽系统音量调节，离开阅读器恢复正常。") },
+                            confirmButton = {
+                                TextButton(onClick = { showVolumeKeyInfo = false }) { Text("知道了") }
                             }
                         )
                     }
@@ -969,17 +1221,33 @@ fun LocalReaderScreen(
                             }
                         )
                     }
+                    Text("滚动模式点击翻页")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        ReaderOptionChip("关", readerSettings.scrollTapPageTurn == com.talebook.app.reader.ReaderScrollTapSpeed.OFF) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = com.talebook.app.reader.ReaderScrollTapSpeed.OFF)
+                        }
+                        ReaderOptionChip("快", readerSettings.scrollTapPageTurn == com.talebook.app.reader.ReaderScrollTapSpeed.FAST) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = com.talebook.app.reader.ReaderScrollTapSpeed.FAST)
+                        }
+                        ReaderOptionChip("中", readerSettings.scrollTapPageTurn == com.talebook.app.reader.ReaderScrollTapSpeed.MEDIUM) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = com.talebook.app.reader.ReaderScrollTapSpeed.MEDIUM)
+                        }
+                        ReaderOptionChip("慢", readerSettings.scrollTapPageTurn == com.talebook.app.reader.ReaderScrollTapSpeed.SLOW) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = com.talebook.app.reader.ReaderScrollTapSpeed.SLOW)
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("滚动模式点击翻页")
+                        Text("阅读时隐藏状态栏")
                         CompactSwitch(
-                            checked = readerSettings.scrollTapPageTurn,
-                            onCheckedChange = {
-                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = it)
-                            }
+                            checked = hideStatusBarInReader,
+                            onCheckedChange = { scope.launch { settingsRepository.saveReaderHideStatusBarInReader(it) } }
                         )
                     }
                     Row(
@@ -987,7 +1255,33 @@ fun LocalReaderScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("使用出版社样式")
+                        Text("底部工具栏隐藏中文标签")
+                        CompactSwitch(
+                            checked = hideToolbarLabels,
+                            onCheckedChange = { scope.launch { settingsRepository.saveReaderHideToolbarLabels(it) } }
+                        )
+                    }
+                    var showPublisherStylesInfo by remember { mutableStateOf(false) }
+                    var showForcePublisherFontsInfo by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("使用出版社样式")
+                            Text(
+                                text = "注意",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clickable { showPublisherStylesInfo = true }
+                                    .padding(vertical = 2.dp)
+                            )
+                        }
                         CompactSwitch(
                             checked = readerSettings.publisherStyles,
                             onCheckedChange = {
@@ -1000,7 +1294,20 @@ fun LocalReaderScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("强制使用出版社字体")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("强制使用出版社字体")
+                            Text(
+                                text = "注意",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clickable { showForcePublisherFontsInfo = true }
+                                    .padding(vertical = 2.dp)
+                            )
+                        }
                         CompactSwitch(
                             checked = readerSettings.forcePublisherFonts,
                             onCheckedChange = {
@@ -1008,9 +1315,26 @@ fun LocalReaderScreen(
                             }
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("出版社样式指 EPUB 自带排版 CSS。关闭后 App 设置会更强地覆盖书籍原排版。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("强制使用出版社字体默认关闭。开启后会强制加载 EPUB 内嵌字体，可能造成部分图书无法在线阅读。遇到问题可缓存本地或关闭此选项。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (showPublisherStylesInfo) {
+                        AlertDialog(
+                            onDismissRequest = { showPublisherStylesInfo = false },
+                            title = { Text("使用出版社样式") },
+                            text = { Text("出版社样式指 EPUB 自带 CSS。关闭后 App 设置覆盖更强，行距、字体、字距等参数会强制生效。") },
+                            confirmButton = {
+                                TextButton(onClick = { showPublisherStylesInfo = false }) { Text("知道了") }
+                            }
+                        )
+                    }
+                    if (showForcePublisherFontsInfo) {
+                        AlertDialog(
+                            onDismissRequest = { showForcePublisherFontsInfo = false },
+                            title = { Text("强制使用出版社字体") },
+                            text = { Text("强制使用出版社字体可能造成部分图书无法在线阅读。开启此选项后，App 会忽略内嵌大字体，避免远程阅读时白屏，但会影响排版一致性。") },
+                            confirmButton = {
+                                TextButton(onClick = { showForcePublisherFontsInfo = false }) { Text("知道了") }
+                            }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -1242,6 +1566,9 @@ private fun FloatingTtsBar(
 private fun ReaderBottomBar(
     progression: Double,
     darkMode: Boolean,
+    showTime: Boolean,
+    showLabels: Boolean,
+    contentColor: Color,
     onToc: () -> Unit,
     onToggleTheme: () -> Unit,
     onSettings: () -> Unit,
@@ -1256,19 +1583,34 @@ private fun ReaderBottomBar(
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        ReaderProgressOverlay(progression = progression, onClick = onProgressClick)
+        ReaderProgressOverlay(
+            progression = progression,
+            showTime = showTime,
+            contentColor = contentColor,
+            onClick = onProgressClick
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onToc) { Icon(Icons.Default.MenuBook, contentDescription = "目录") }
-            IconButton(onClick = onToggleTheme) {
-                Icon(if (darkMode) Icons.Default.LightMode else Icons.Default.DarkMode, contentDescription = "切换明暗")
+            ToolbarButton(icon = { Icon(Icons.Default.MenuBook, contentDescription = "目录") }, label = "目录", showLabel = showLabels, onClick = onToc)
+            ToolbarButton(icon = { Icon(if (darkMode) Icons.Default.LightMode else Icons.Default.DarkMode, contentDescription = "切换明暗") }, label = if (darkMode) "白天" else "黑夜", showLabel = showLabels, onClick = onToggleTheme)
+            ToolbarButton(icon = { Icon(Icons.Default.Tune, contentDescription = "阅读设置") }, label = "设置", showLabel = showLabels, onClick = onSettings)
+            ToolbarButton(icon = { Icon(Icons.Default.Edit, contentDescription = "笔记") }, label = "笔记", showLabel = showLabels, onClick = onNote)
+            ToolbarButton(icon = { Icon(Icons.Default.VolumeUp, contentDescription = "朗读") }, label = "朗读", showLabel = showLabels, onClick = onTts)
+        }
+    }
+}
+
+@Composable
+private fun ToolbarButton(icon: @Composable () -> Unit, label: String, showLabel: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            icon()
+            if (showLabel) {
+                Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
-            IconButton(onClick = onSettings) { Icon(Icons.Default.Tune, contentDescription = "阅读设置") }
-            IconButton(onClick = onNote) { Icon(Icons.Default.Edit, contentDescription = "笔记") }
-            IconButton(onClick = onTts) { Icon(Icons.Default.VolumeUp, contentDescription = "朗读") }
         }
     }
 }
@@ -1331,7 +1673,7 @@ private fun CompactSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>
 ) {
-    Box(modifier = Modifier.height(28.dp), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
         Slider(
             value = value,
             onValueChange = onValueChange,
@@ -1342,7 +1684,7 @@ private fun CompactSlider(
 }
 
 @Composable
-private fun CompactSwitch(
+internal fun CompactSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
@@ -1356,10 +1698,21 @@ private fun CompactSwitch(
 @Composable
 private fun ReaderProgressOverlay(
     progression: Double,
+    showTime: Boolean,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null
 ) {
     val safeProgress = progression.toFloat().coerceIn(0f, 1f)
+    var nowText by remember { mutableStateOf(formatNow()) }
+    LaunchedEffect(showTime) {
+        if (showTime) {
+            while (true) {
+                nowText = formatNow()
+                kotlinx.coroutines.delay(30_000L)
+            }
+        }
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -1370,23 +1723,37 @@ private fun ReaderProgressOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(2.dp)
-                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                .background(contentColor.copy(alpha = 0.22f))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(safeProgress)
-                    .background(MaterialTheme.colorScheme.primary)
+                    .background(contentColor)
             )
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            if (showTime) {
+                Text(
+                    text = nowText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.7f)
+                )
+            } else {
+                Spacer(Modifier)
+            }
             Text(
                 text = "${(safeProgress * 100).toInt()}%",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = contentColor.copy(alpha = 0.7f)
             )
         }
     }
+}
+
+private fun formatNow(): String {
+    val now = java.time.LocalTime.now()
+    return String.format(java.util.Locale.US, "%02d:%02d", now.hour, now.minute)
 }
 
 private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
@@ -1397,10 +1764,16 @@ private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (th
 
 private fun FragmentActivity.showSystemBarsAfterReader() {
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-        window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        window.insetsController?.show(AndroidWindowInsets.Type.statusBars())
     } else {
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+    }
+}
+
+private fun FragmentActivity.hideReaderStatusBar() {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        window.insetsController?.hide(AndroidWindowInsets.Type.statusBars())
     }
 }
 

@@ -79,5 +79,37 @@ data class RecentReadingEntity(
     val updatedAt: Long,
     val sortIndex: Long,
     val pinned: Boolean = false,
-    val pinnedAt: Long = 0L
+    val pinnedAt: Long = 0L,
+    val sourceKind: String = SOURCE_KIND_LIBRARY,
+    val sourceLabel: String = ""
+) {
+    companion object {
+        const val SOURCE_KIND_LIBRARY = "library"
+        const val SOURCE_KIND_LOCAL = "local"
+    }
+}
+
+@Entity(tableName = "local_folder")
+data class LocalFolderEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val displayName: String,
+    val rootUri: String,
+    val addedAt: Long
+)
+
+@Entity(
+    tableName = "local_book",
+    indices = [Index(value = ["folderId"]), Index(value = ["available"])]
+)
+data class LocalBookEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val folderId: Long?,
+    val documentUri: String,
+    val displayName: String,
+    val relativePath: String,
+    val format: String,
+    val sizeBytes: Long,
+    val available: Boolean,
+    val lastReadAt: Long,
+    val importedAt: Long
 )

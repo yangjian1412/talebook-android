@@ -39,10 +39,8 @@ import com.talebook.app.viewmodel.DownloadState
 @Composable
 fun BookDetailScreen(
     bookId: Int,
-    readerMode: String = SettingsRepository.READER_LOCAL,
     onBack: () -> Unit,
     onRead: (Int) -> Unit,
-    onReadFullscreen: (Int) -> Unit,
     viewModel: BookDetailViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -59,17 +57,15 @@ fun BookDetailScreen(
         viewModel.loadBook(bookId)
     }
 
-    LaunchedEffect(uiState.book?.id, readerMode) {
+    LaunchedEffect(uiState.book?.id) {
         val loadedBookId = uiState.book?.id ?: return@LaunchedEffect
-        if (readerMode == SettingsRepository.READER_LOCAL) {
-            viewModel.loadLocalReaderInfo(context.applicationContext, loadedBookId)
-        }
+        viewModel.loadLocalReaderInfo(context.applicationContext, loadedBookId)
     }
 
-    DisposableEffect(lifecycleOwner, uiState.book?.id, readerMode) {
+    DisposableEffect(lifecycleOwner, uiState.book?.id) {
         val observer = LifecycleEventObserver { _, event ->
             val loadedBookId = uiState.book?.id ?: return@LifecycleEventObserver
-            if (event == Lifecycle.Event.ON_RESUME && readerMode == SettingsRepository.READER_LOCAL) {
+            if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.loadLocalReaderInfo(context.applicationContext, loadedBookId)
             }
         }
@@ -227,50 +223,28 @@ fun BookDetailScreen(
 
                         Spacer(modifier = Modifier.height(24.dp))
 
-                        if (readerMode == SettingsRepository.READER_LOCAL) {
-                            LocalReaderInfoCard(
-                                progression = uiState.localProgression,
-                                isCached = uiState.cacheInfo.isCached,
-                                cacheFormat = uiState.cacheInfo.format,
-                                cacheSizeBytes = uiState.cacheInfo.sizeBytes,
-                                cacheBusy = uiState.cacheBusy,
-                                cacheProgressBytes = uiState.cacheProgressBytes,
-                                cacheTotalBytes = uiState.cacheTotalBytes,
-                                cacheAction = uiState.cacheCurrentAction,
-                                cacheMessage = uiState.cacheMessage,
-                                onDeleteCache = { viewModel.deleteLocalCache(context.applicationContext) },
-                                onStartCache = { viewModel.startLocalCache(context.applicationContext) },
-                                onCancelCache = { viewModel.cancelLocalCache() }
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { onRead(book.id) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.MenuBook, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("阅读")
-                            }
-                        } else {
-                            Button(
-                                onClick = { onRead(book.id) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("在线阅读")
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            OutlinedButton(
-                                onClick = { onReadFullscreen(book.id) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.Fullscreen, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("全屏阅读")
-                            }
+                        LocalReaderInfoCard(
+                            progression = uiState.localProgression,
+                            isCached = uiState.cacheInfo.isCached,
+                            cacheFormat = uiState.cacheInfo.format,
+                            cacheSizeBytes = uiState.cacheInfo.sizeBytes,
+                            cacheBusy = uiState.cacheBusy,
+                            cacheProgressBytes = uiState.cacheProgressBytes,
+                            cacheTotalBytes = uiState.cacheTotalBytes,
+                            cacheAction = uiState.cacheCurrentAction,
+                            cacheMessage = uiState.cacheMessage,
+                            onDeleteCache = { viewModel.deleteLocalCache(context.applicationContext) },
+                            onStartCache = { viewModel.startLocalCache(context.applicationContext) },
+                            onCancelCache = { viewModel.cancelLocalCache() }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = { onRead(book.id) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.MenuBook, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("阅读")
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -350,7 +324,7 @@ fun BookDetailScreen(
                             )
                         }
 
-                        if (readerMode != SettingsRepository.READER_LOCAL && uiState.readState != null && uiState.readState!!.percentage > 0) {
+                        if (uiState.readState != null && uiState.readState!!.percentage > 0) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
                                 text = "已读 ${(uiState.readState!!.percentage * 100).toInt()}%",

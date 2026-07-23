@@ -27,6 +27,7 @@ import com.talebook.app.util.resolveUrl
 fun BookCard(
     book: Book,
     onClick: () -> Unit,
+    serverLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -41,30 +42,54 @@ fun BookCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(148.dp),
-                contentAlignment = Alignment.Center
+                    .height(148.dp)
             ) {
-                val coverUrl = resolveUrl(book.coverPath())
-                if (coverUrl.isNotBlank()) {
-                    val cookie = RetrofitClient.cookieHeader()
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(coverUrl)
-                            .apply { if (cookie.isNotBlank()) addHeader("Cookie", cookie) }
-                            .build(),
-                        contentDescription = book.title,
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .matchParentSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val coverUrl = resolveUrl(book.coverPath())
+                    if (coverUrl.isNotBlank()) {
+                        val cookie = RetrofitClient.cookieHeader()
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(coverUrl)
+                                .apply { if (cookie.isNotBlank()) addHeader("Cookie", cookie) }
+                                .build(),
+                            contentDescription = book.title,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
+                            contentScale = ContentScale.FillBounds
+                        )
+                    } else {
+                        Icon(
+                            Icons.Default.Book,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+                if (!serverLabel.isNullOrBlank()) {
+                    Surface(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
-                        contentScale = ContentScale.FillBounds
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.Book,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(32.dp)
-                    )
+                            .align(Alignment.TopStart)
+                            .padding(2.dp),
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
+                    ) {
+                        Text(
+                            text = serverLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 8.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                        )
+                    }
                 }
             }
 

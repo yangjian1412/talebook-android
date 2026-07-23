@@ -22,26 +22,51 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
     val scope = rememberCoroutineScope()
-    val isLoggedIn by settingsRepository.isLoggedIn.collectAsState(initial = false)
-    val readerMode by settingsRepository.readerMode.collectAsState(initial = SettingsRepository.READER_LOCAL)
-
     NavHost(
         navController = navController,
-        startDestination = if (isLoggedIn) "home" else "login"
+        startDestination = "splash"
     ) {
-        composable("login") {
+        composable("splash") {
+            SplashScreen(
+                settingsRepository = settingsRepository,
+                onGoHome = {
+                    navController.navigate("home") {
+                        popUpTo("splash") { inclusive = true }
+                    }
+                },
+                onGoLogin = {
+                    navController.navigate("login") {
+                        popUpTo("splash") { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        composable(
+            "login?bookId={bookId}",
+            arguments = listOf(navArgument("bookId") { type = NavType.IntType; defaultValue = -1 })
+        ) { entry ->
+            val resumeBookId = entry.arguments?.getInt("bookId")?.takeIf { it > 0 }
             LoginScreen(
                 settingsRepository = settingsRepository,
                 onLoginSuccess = {
+                    val id = resumeBookId
+                    if (id != null) {
+                        navController.navigate("local_reader/$id") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    } else {
+                        navController.navigate("home") {
+                            popUpTo("login") { inclusive = true }
+                        }
+                    }
+                },
+                onSkipAuth = {
                     navController.navigate("home") {
                         popUpTo("login") { inclusive = true }
                     }
                 },
-                onAnonymousEnter = {
-                    navController.navigate("home") {
-                        popUpTo("login") { inclusive = true }
-                    }
-                }
+                resumeBookId = resumeBookId
             )
         }
 
@@ -50,11 +75,10 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
                 settingsRepository = settingsRepository,
                 onBookClick = { bookId -> navController.navigate("book/$bookId") },
                 onReadBook = { bookId ->
-                    if (readerMode == SettingsRepository.READER_LOCAL) {
-                        navController.navigate("local_reader/$bookId")
-                    } else {
-                        navController.navigate("reader/$bookId")
-                    }
+                    navController.navigate("local_reader/$bookId")
+                },
+                onReadLocalBook = { localBookId ->
+                    navController.navigate("local_reader/local/$localBookId")
                 },
                 onNavigateSearch = { navController.navigate("search") },
                 onNavigateLibrary = { navController.navigate("library") },
@@ -91,32 +115,10 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
             val bookId = it.arguments?.getInt("bookId") ?: return@composable
             BookDetailScreen(
                 bookId = bookId,
-                readerMode = readerMode,
                 onBack = { navController.popBackStack() },
                 onRead = { id ->
-                    if (readerMode == SettingsRepository.READER_LOCAL) {
-                        navController.navigate("local_reader/$id")
-                    } else {
-                        navController.navigate("reader/$id")
-                    }
-                },
-                onReadFullscreen = { id -> navController.navigate("reader/$id?fullscreen=true") }
-            )
-        }
-
-        composable(
-            "reader/{bookId}?fullscreen={fullscreen}",
-            arguments = listOf(
-                navArgument("bookId") { type = NavType.IntType },
-                navArgument("fullscreen") { type = NavType.BoolType; defaultValue = false }
-            )
-        ) {
-            val bookId = it.arguments?.getInt("bookId") ?: return@composable
-            val isFullscreen = it.arguments?.getBoolean("fullscreen") ?: false
-            ReaderScreen(
-                bookId = bookId,
-                isFullscreen = isFullscreen,
-                onBack = { navController.popBackStack() }
+                    navController.navigate("local_reader/$id")
+                }
             )
         }
 
@@ -132,7 +134,23 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
             LocalReaderScreen(
                 bookId = bookId,
                 initialLocatorJson = locator,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onOpenLogin = { id ->
+                    navController.navigate("login?bookId=$id")
+                },
+                onOpenSettings = { navController.navigate("settings") }
+            )
+        }
+
+        composable(
+            "local_reader/local/{localBookId}",
+            arguments = listOf(navArgument("localBookId") { type = NavType.LongType })
+        ) {
+            val localBookId = it.arguments?.getLong("localBookId") ?: return@composable
+            LocalReaderScreen(
+                localBookId = localBookId,
+                onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate("settings") }
             )
         }
 
@@ -151,7 +169,16 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
                         settingsRepository.saveStartTab(SettingsRepository.START_TAB_SETTINGS)
                         navController.navigate("notes_management")
                     }
-                }
+                },
+                onOpenLocalLibrary = { navController.navigate("local_library") }
+            )
+        }
+
+        composable("local_library") {
+            LocalLibraryScreen(
+                onBookClick = { bookId -> navController.navigate("book/$bookId") },
+                onReadLocalBook = { localBookId -> navController.navigate("local_reader/local/$localBookId") },
+                onBack = { navController.popBackStack() }
             )
         }
 

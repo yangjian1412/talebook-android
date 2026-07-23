@@ -1,6 +1,7 @@
 ﻿package com.talebook.app
 
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -12,10 +13,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
 import androidx.fragment.app.FragmentActivity
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.ui.navigation.NavGraph
 import com.talebook.app.ui.theme.TaleReaderTheme
 import com.talebook.app.ui.theme.ThemePresets
@@ -23,6 +28,12 @@ import com.talebook.app.ui.theme.toColor
 import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
+
+    var volumeKeyPageTurnEnabled: Boolean = false
+    var volumeKeyPageTurnToast: String? = null
+    var currentReaderSessionId: Long? = null
+    var currentReaderScrollMode: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -41,6 +52,12 @@ class MainActivity : FragmentActivity() {
         }
 
         enableEdgeToEdge()
+        applyGlobalSystemBars()
+
+        lifecycleScope.launch {
+            SettingsRepository(applicationContext).migrateLegacyMargins()
+        }
+
         setContent {
             val settingsRepository = remember(applicationContext) {
                 SettingsRepository(applicationContext)
@@ -63,17 +80,58 @@ class MainActivity : FragmentActivity() {
                 ) {
                     val navController = rememberNavController()
                     NavGraph(navController = navController)
-                    if (startBookId > 0) {
-                        LaunchedEffect(startBookId) {
-                            android.util.Log.d(
-                                "TaleMain",
-                                "deeplink: navigate to reader/$startBookId?fullscreen=true"
-                            )
-                            navController.navigate("reader/$startBookId?fullscreen=true")
-                        }
-                    }
                 }
             }
         }
+    }
+
+    private fun applyGlobalSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.navigationBars())
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (handleVolumeKey(keyCode, isUp = false)) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (handleVolumeKey(keyCode, isUp = true)) return true
+        return super.onKeyUp(keyCode, event)
+    }
+
+    private fun handleVolumeKey(keyCode: Int, isUp: Boolean): Boolean {
+        if (!volumeKeyPageTurnEnabled) return false
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) return false
+        if (isUp) return true
+        val sessionId = currentReaderSessionId ?: return true
+        if (currentReaderScrollMode) {
+            if (volumeKeyPageTurnToast != "shown") {
+                volumeKeyPageTurnToast = "shown"
+                android.widget.Toast.makeText(
+                    this,
+                    "音量键翻页仅在翻页模式生效",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            ReadiumUiEvents.emitGoBackwardKey(sessionId)
+        } else {
+            ReadiumUiEvents.emitGoForwardKey(sessionId)
+        }
+        return true
     }
 }

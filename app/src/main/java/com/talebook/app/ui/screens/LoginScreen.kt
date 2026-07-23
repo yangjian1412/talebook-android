@@ -39,7 +39,9 @@ import kotlinx.coroutines.launch
 fun LoginScreen(
     settingsRepository: SettingsRepository,
     onLoginSuccess: () -> Unit,
-    onAnonymousEnter: () -> Unit
+    onAnonymousEnter: () -> Unit = {},
+    onSkipAuth: (() -> Unit)? = null,
+    resumeBookId: Int? = null,
 ) {
     val factory = object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -50,9 +52,11 @@ fun LoginScreen(
     val viewModel: LoginViewModel = viewModel(factory = factory)
     val uiState by viewModel.uiState.collectAsState()
 
-    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "https://book.liufenyi.xyz:9973")
+    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "")
+    val serverName by settingsRepository.serverName.collectAsState(initial = "")
     var showServerConfig by remember { mutableStateOf(false) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
+    var editName by remember(serverName) { mutableStateOf(serverName) }
     var urlSavedHint by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -119,10 +123,19 @@ fun LoginScreen(
                     if (showServerConfig) {
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
+                            value = editName,
+                            onValueChange = { editName = it },
+                            label = { Text("服务器名称") },
+                            placeholder = { Text("可选名称") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
                             value = editUrl,
                             onValueChange = { editUrl = it; urlSavedHint = false },
                             label = { Text("服务器地址") },
-                            placeholder = { Text("https://book.liufenyi.xyz:9973") },
+                            placeholder = { Text("https://your-server:port") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -132,6 +145,7 @@ fun LoginScreen(
                                 RetrofitClient.updateBaseUrl(editUrl)
                                 scope.launch {
                                     settingsRepository.saveServerUrl(editUrl)
+                                    settingsRepository.saveServerName(editName)
                                     urlSavedHint = true
                                 }
                             },
@@ -139,7 +153,7 @@ fun LoginScreen(
                         ) {
                             Icon(Icons.Default.Save, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("保存服务器地址")
+                            Text("保存服务器设置")
                         }
                         if (urlSavedHint) {
                             Spacer(modifier = Modifier.height(4.dp))
@@ -157,7 +171,11 @@ fun LoginScreen(
 
             // Tab 切换
             TabRow(
-                selectedTabIndex = if (uiState.mode == LoginMode.CODE) 0 else 1,
+                selectedTabIndex = when (uiState.mode) {
+                    LoginMode.CODE -> 0
+                    LoginMode.PASSWORD -> 1
+                    LoginMode.GUEST -> 2
+                },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Tab(
@@ -172,14 +190,26 @@ fun LoginScreen(
                     text = { Text("账号密码") },
                     icon = { Icon(Icons.Default.Person, contentDescription = null) }
                 )
+                Tab(
+                    selected = uiState.mode == LoginMode.GUEST,
+                    onClick = { viewModel.setMode(LoginMode.GUEST) },
+                    text = { Text("游客") },
+                    icon = { Icon(Icons.Default.PersonOutline, contentDescription = null) }
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            if (uiState.mode == LoginMode.CODE) {
-                CodeLoginForm(uiState, viewModel)
-            } else {
-                PasswordLoginForm(uiState, viewModel)
+            when (uiState.mode) {
+                LoginMode.CODE -> CodeLoginForm(uiState, viewModel)
+                LoginMode.PASSWORD -> PasswordLoginForm(uiState, viewModel)
+                LoginMode.GUEST -> {
+                    Text(
+                        text = "无需账号密码，以访客身份浏览公共内容",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -222,24 +252,15 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 匿名进入
+            // 跳过验证直接进入
             OutlinedButton(
-                onClick = onAnonymousEnter,
+                onClick = { onSkipAuth?.invoke() ?: onAnonymousEnter() },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Default.PersonOutline, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("以访客身份进入（无需登录）")
+                Text("跳过验证直接进入（可稍后在设置中配置服务器与登录）")
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "如果服务器启用了私人模式或允许注册，请使用上述登录方式；\n" +
-                        "否则可以直接以访客身份浏览书籍（下载和阅读可能受限）。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
 
             Spacer(modifier = Modifier.height(24.dp))
         }

@@ -8,16 +8,311 @@ Talebook Android v2.0 的核心方向是把 App 做成完整的本地阅读入�
 
 - talebook 服务端负责登录、书籍元数据和书籍文件资源。
 - Android App 负责阅读体验、缓存、进度、书签、搜索、笔记和 TTS。
-- 本地阅读器优先，在线 WebView 阅读器仅作为兼容兜底。
+- 本地 Readium 阅读器是唯一阅读器，在线 WebView 阅读器已在 2.2.0 移除。
 
 ## 重要约定
 
-- 设置页用户可见文案只使用“使用本地阅读器”和“使用在线阅读器”。不要写“新版/旧版阅读器”。
 - 本地阅读器不要强制先缓存再打开。无缓存时应流式阅读远程资源，有缓存时优先打开本地文件。
 - 阅读数据当前只存本地，不做账号级多端同步。
 - 跨设备迁移通过导出/导入阅读数据实现。
 - TTS 第一期已接入系统 TextToSpeech，只做阅读页内和熄屏朗读，不做通知栏媒体控制和后台服务。
 - PDF 专项适配独立处理，不要假设 EPUB 的所有能力能直接复用到 PDF。
+
+## 2.2.0 完成摘要
+
+> 当前版本：`2.2.0` (versionCode = 4)
+> 状态：已完成
+> 目标：去掉在线阅读器、增强阅读沉浸式体验、加快主页启动、引入本地书架和 TXT 阅读。
+
+### 目标摘要
+
+- App 启动即全局隐藏导航栏；状态栏默认保留；阅读内可在高级设置里再隐藏状态栏，并左下进度条增加时间显示。
+- 阅读工具栏改为覆盖式悬浮，显隐不修改 WebView padding / 高度，避免重排。
+- 页边距拆分为左右 / 上下两个独立值。Readium 取水平，垂直通过注入 CSS 控制。
+- 完全移除在线阅读器（ReaderScreen、ReaderViewModel、readerMode 设置项、路由分支）。
+- 跳过验证可直接进入主页（无服务器配置也能进入），设置中保留“服务器与登录”入口供补齐。跳过验证后主页只显示本地 + 设置。
+- 主页首屏显示缓存，右上角 Refresh + 下拉刷新，未配置服务器显示空态卡片。
+- 新增本地书架：SAF 配置文件夹、不复制源文件、用户主动刷新、可移除、可按目录浏览；本地书与书库书在最近阅读都显示来源标签。
+- 本地支持 epub / pdf / txt 阅读；mobi / azw3 / fb2 / doc 等其它格式可入库但暂不提供打开按钮（提示“暂不支持本地打开”）。
+- TXT 转为缓存 EPUB 后走 Readium，支持编码识别、章节目录、缓存复用。
+
+### 模块 A · 阅读器沉浸与体验
+
+A1. 全局导航栏隐藏
+- 修改 `app/src/main/res/values/themes.xml`，将 `Theme.Talebook` 改为无 ActionBar 全屏主题。
+- `MainActivity.onCreate` 中：
+  - `WindowCompat.setDecorFitsSystemWindows(window, false)`
+  - `WindowInsetsControllerCompat(window, window.decorView).run { hide(Type.navigationBars()); systemBarsBehavior = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }`
+- `LocalReaderScreen` 不再主动恢复导航栏；`ReaderScreen` 删除后无需再处理全屏块。
+
+A2. 阅读状态栏可隐藏开关
+- 新增 `SettingsRepository.readerHideStatusBarInReader`（默认 `false`），DataStore key：`reader_hide_status_bar_in_reader`。
+- 开启后 `LocalReaderScreen` 进入时 `WindowInsetsControllerCompat.hide(Type.statusBars())`；退出时由 `MainActivity` 统一策略恢复（全局导航栏仍隐藏）。
+- `LocalReaderScreen` 左下角进度复合按钮增加时间显示：`HH:mm`，使用 `LocalTime.now()` 通过 `LaunchedEffect` 每分钟刷新一次；与现有进度按钮同行布局。
+
+A3. 覆盖式悬浮工具栏
+- 重写 `LocalReaderScreen` 顶层容器：
+  - `AndroidView(Readium)` 占满全屏（`fillMaxSize`）。
+  - 顶部 `Surface(Modifier.align(TopCenter))` 64dp；底部 `Surface(Modifier.align(BottomCenter))` 56dp；两者透明度 96% 圆角，仅通过 `alpha` 与 `translationY` 控制显隐。
+  - `barsVisible` 控制悬浮层 `alpha`，不再修改 Readium padding / 高度，避免重新布局。
+- 中央点击区域触发逻辑保持 `ReadiumUiEvents.centerTaps` 路径，仅新增 `barsVisible` 状态读取。
+- 顶部 actions：书签、搜索、缓存、设置、退出；底部：时间 + 进度数字 + 模式切换。
+
+A4. 页边距弹窗（左右 / 上下独立）
+- `ReaderDisplaySettings` 增加 `pageMarginHorizontal: Float = 1.0f` 和 `pageMarginVertical: Float = 1.0f`，保留 `pageMargins: Float` 作为兼容过渡值，后续版本移除。
+- `SettingsRepository`：
+  - 新增 `READER_PAGE_MARGIN_HORIZONTAL_KEY = floatPreferencesKey("reader_page_margin_horizontal")`。
+  - 新增 `READER_PAGE_MARGIN_VERTICAL_KEY = floatPreferencesKey("reader_page_margin_vertical")`。
+  - 新增 `readerPageMarginHorizontal / readerPageMarginVertical: Flow<Float>`。
+  - `saveReaderDisplaySettings(...)` 增加两个参数。
+- 基本设置里“页边距”一行为按钮，文字形如 `页边距 左右 1.0 · 上下 1.0`，点击弹 `AlertDialog`，弹窗内两个 `CompactSlider`（0.5 – 2.0）。
+- 应用规则：
+  - Readium `EpubPreferences.pageMargins = settings.pageMarginHorizontal`。
+  - `injectCustomCss` 追加 `html, body { padding-top: ${vH}em !important; padding-bottom: ${vV}em !important; }`（vH = vV = vertical * 0.5）。
+- 旧 `reader_page_margins` 一次性迁移到新两个键（`SettingsRepository.migrateLegacyMargins()` 在 `MainActivity.onCreate` 调一次）。
+
+### 模块 B · 删除在线阅读器
+
+B1. 代码清理
+- 删除 `app/src/main/java/com/talebook/app/ui/screens/ReaderScreen.kt`。
+- 删除 `app/src/main/java/com/talebook/app/viewmodel/ReaderViewModel.kt`。
+- `NavGraph.kt`：
+  - 删除 `composable("reader/{bookId}?fullscreen=...")` 路由。
+  - 删除 `BookDetailScreen` 的 `onReadFullscreen` 参数与 `navController.navigate("reader/...")` 调用。
+  - 删除 `readerMode` Flow 收集与 `if (readerMode == ...)` 分支，统一走 `local_reader/{bookId}`。
+  - 增加 `composable("local_reader/local/{localBookId}")` 路由。
+- `BookDetailScreen.kt`：去掉 `readerMode` 参数、对应分支与全屏阅读按钮。
+- `SettingsRepository.kt`：
+  - 删除 `READER_ONLINE` 常量、`READER_MODE_KEY`、`readerMode: Flow<String>`、`saveReaderMode`。
+- `SettingsScreen.kt`：删除“阅读器”分组（本地 / 在线 RadioButton）；保留“阅读器高级设置”入口。
+
+B2. 文档 / 版本
+- `app/build.gradle.kts`：`versionCode = 4`，`versionName = "2.2.0"`。
+- `SettingsScreen.kt` 关于：`Tale Book v2.2.0`。
+- `README.md`：`当前版本：2.2.0`，删除 alpha 措辞，新增“2.2.0 更新日志”。
+- `DEVELOPMENT.md` 调试脚本 `talebook-2.1.0-debug.apk` → `talebook-2.2.0-debug.apk`。
+
+### 模块 C · 登录 / 启动 / 主页缓存
+
+C1. 登录页“跳过验证直接进入”
+- `LoginScreen.kt`：
+  - 删除“以访客身份进入（无需登录）”按钮。
+  - 新增“跳过验证直接进入”按钮，文案：`跳过验证直接进入（可稍后在设置中配置服务器与登录）`。
+  - `onClick = onSkipAuth`，回调 `navigate("home") popUpTo("login") inclusive=true`。
+- `SettingsRepository`：
+  - 新增 `SKIP_AUTH_KEY = booleanPreferencesKey("skip_auth")`。
+  - `skipAuth: Flow<Boolean>`（默认 `false`）。
+  - `isLoggedIn` 在 `skipAuth == true` 时永远返回 `true`。
+- `NavGraph.startDestination`：若 `skipAuth || isLoggedIn` → `home`，否则 `login`。
+- `MainActivity.onCreate`：读 `skipAuth`，预热一次以便首屏路径决策正确。
+
+C2. 主页缓存
+- 新增轻量本地缓存：`SharedPreferences("home_cache")` 存储上一次 `HomeUiState` 的 JSON 序列化（用 `Gson`）。
+- `HomeViewModel`：
+  - `cachedHome: HomeUiState?`：从缓存读取上次数据。
+  - 首次进入直接 emit `cachedHome`，并设置 `isRefreshing = true`，后台拉取 `getIndex/getReading/getShelf` 后覆盖并写回缓存。
+  - `forceRefresh()`：跳过缓存，立即从服务端拉取。
+- `HomeScreen`：
+  - 右上角 `Refresh` 按钮（`Icons.Default.Refresh`），点击 `viewModel.forceRefresh()`。
+  - 使用 Material3 `PullToRefreshBox` 包裹内容，下拉同样触发 `forceRefresh()`。
+  - “已缓存图书”小卡片：点击进入 `CachedBooksScreen`。
+
+C3. 主页无服务器配置空态
+- `HomeUiState` 新增 `serverConfigured: Boolean`（依据 `activeServerFromPrefs(prefs).baseUrl.isNotBlank()`）。
+- `HomeViewModel`：当 `serverConfigured == false` 时不发起 `getIndex/getReading/getShelf` 请求，避免 401 噪音。
+- UI 显示空态卡片：`尚未配置服务器，可进入设置添加服务器，或浏览本地书架`。
+
+C4. 跳过验证后访问范围
+- 跳过验证后主页只显示 “本地” + “设置” 两个 Tab（`homeTabs` 被强制设为 `local`）；书库 / 最近阅读入口隐藏。
+- 用户进入“设置 → 服务器与登录”补齐登录后，`homeTabs` 恢复为用户之前的偏好。
+- 设置“服务器与登录”：
+  - 当前书库卡片：昵称 / baseUrl / 登录模式。
+  - 操作：`换书库` / `登出` / `添加服务器`。
+
+C5. 主页标签可见性
+- `SettingsRepository.homeTabs: Flow<String>`，取值 `library` / `local` / `both`，默认 `both`，DataStore key `home_tabs`。
+- `MainTabsScreen`：
+  - 收集 `homeTabs`：
+    - `library`：2 tabs，`书库` + `设置`，把“最近阅读”内容合并到“书库”顶部区块。
+    - `local`：2 tabs，`本地` + `设置`。
+    - `both`：4 tabs，`最近阅读` + `书库` + `本地` + `设置`。
+  - 设置页“主页”分组加三态 RadioButton，写回 `homeTabs`。
+- 跳过验证生效时（`skipAuth == true`），`homeTabs` 被覆盖为 `local`，不允许显示书库 tab。
+
+### 模块 D · 本地书库
+
+D1. 数据模型（Room v6）
+- `local_folder(id: Long PK auto, displayName: String, rootUri: String, addedAt: Long)`
+- `local_book(id: Long PK auto, folderId: Long?, documentUri: String, displayName: String, relativePath: String, format: String, sizeBytes: Long, available: Boolean, lastReadAt: Long, importedAt: Long)`
+- `ReaderDatabase` 升到 6，`MIGRATION_5_6`：建两表 + `recent_reading` 增加 `source_kind` / `source_label` 列。
+- `ReaderDao` 新增：
+  - `upsertLocalFolder`、`deleteLocalFolder`、`getLocalFolders`
+  - `upsertLocalBook`、`updateLocalBookAvailability`、`deleteLocalBook`
+  - `searchLocalBooks(folderId)`、`getLocalBook(id)`
+- `ReaderBackupRepository` 备份版本升 3，加入 `local` 段包含 `local_folder` / `local_book`。
+
+D2. `LocalLibraryRepository`（新增）
+- `addFolder(treeUri, displayName)`：
+  - `contentResolver.takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)`。
+  - 插入 `local_folder`，遍历 `DocumentFile.fromTreeUri(...)` 子文件，按扩展名筛选 `epub/pdf/txt/mobi/azw3/fb2/rtf/doc/docx`，插入 `local_book`。
+- `refreshFolder(folderId)`：重新扫描，更新 `available` / `sizeBytes`；找不到的记录 `available = false`，不主动删除。
+- `removeFolder(folderId)`：删除文件夹；本地书记录保留但 `folderId = null, available = false`。
+- `browseByDirectory(rootUri)`：返回 `DocumentFile` 列表，点击下钻。
+- `openBookStream(localBookId)`：返回 SAF `InputStream` 给 `LocalReaderViewModel` 使用。
+- 当前版本 `LocalReaderViewModel` 消费 `epub/pdf/txt`；其它格式入库但不提供“打开”按钮，文案“暂不支持本地打开”。
+
+D3. UI 屏幕（新增）
+- `LocalLibraryScreen.kt`：
+  - 顶部 Tab：全部 / 按文件夹 / 按目录浏览。
+  - 全部视图：所有 `available == true` 的本地书，按最近阅读排序。
+  - 按文件夹视图：分组卡片，每组标题为 `displayName`，下方书籍列表；右侧 overflow 菜单：刷新 / 移除文件夹。
+  - 按目录浏览：`DocumentFile` 树形结构，下钻到子目录。
+  - 右上 actions：`刷新全部` / `添加文件夹`。
+- `LocalFolderManageScreen.kt`：设置页入口，展示已配置文件夹与统计（数量 / 总大小）；底部“添加文件夹”。
+
+D4. 阅读本地书
+- `LocalReaderViewModel`：
+  - 增加 `loadLocalBook(context, localBookId)`。
+  - epub / pdf 写入 `cacheDir/local_books/local_{id}.{format}` 临时文件，由 Readium 读；`onCleared` 时删除。
+  - txt 写入 `cacheDir/local_books/txt_{localBookId}_{size}_{modified}.epub` 缓存文件，由 Readium 作为 EPUB 打开；缓存元数据写入 `txt_{localBookId}.json`，不随 ViewModel 清理删除。
+  - 写入最近阅读时 `sourceKind = local`、`sourceLabel = folder.displayName`；更新 `local_book.lastReadAt`。
+- `LocalReaderScreen` 入口：
+  - `bookId: Int? = null`
+  - `localBookId: Long? = null`
+  - 二者取一；都不存在则报错“无效阅读入口”。
+- `NavGraph` 新增 `composable("local_reader/local/{localBookId}")`。
+- `ReadiumHostFragment` 暂无需改；走 `File` 临时路径，`assetRetriever.retrieve(File(...))`。
+
+D5. 最近阅读来源标签
+- `RecentReadingEntity` 增加 `sourceKind: String = "library"`（取值 `library` / `local`）与 `sourceLabel: String = ""`（书库 `server.name` 或本地文件夹名）。
+- `LocalReaderViewModel` 在写入最近阅读时填充这两字段；旧数据迁移时默认 `library` / 当前 `activeServer.name`。
+- `RecentReadingViewModel.RecentReadingItem` 暴露 `sourceKind` / `sourceLabel`。
+- `RecentReadingScreen` 每条记录渲染 `AssistChip`，在封面下方或进度按钮右侧：
+  - `sourceKind == "local"` 显示“本地”，弱 tint。
+  - `sourceKind == "library"` 显示 `sourceLabel`，主 tint。
+
+D6. 本地书架设置入口
+- `SettingsScreen`“本地书架”分组：
+  - 已配置文件夹列表（`displayName` + 路径 + 书籍数）。
+  - 每行 actions：刷新 / 移除。
+  - 底部 `添加文件夹` 按钮，使用 `ActivityResultContracts.OpenDocumentTree`，回调 `LocalLibraryRepository.addFolder`。
+- 设置页新增 `local_library` 路由入口（跳 `LocalFolderManageScreen`）。
+- `MainTabsScreen` 在 `homeTabs in (local, both)` 时新增 Tab：`本地`（图标 `Icons.Default.LibraryBooks`），跳 `LocalLibraryScreen`。
+
+### 模块 E · 默认启动路径
+
+- `MainActivity.onCreate`：
+  - 收集 `skipAuth` 与 `isLoggedIn`，首次决定是否需要绕过登录。
+  - 应用全局沉浸式配置（模块 A1）。
+  - 调用 `SettingsRepository.migrateLegacyMargins()`，把旧 `reader_page_margins` 拆到新两键。
+  - 调用 `TalebookApp.onCreate` 初始化（已经存在）：持久化 CookieJar、Room 单例。
+- `NavGraph.startDestination`：`skipAuth || isLoggedIn` → `home`，否则 `login`。
+
+### 模块 F · 测试与回归
+
+F1. 沉浸式
+- App 冷启动 → 主页面无导航栏，状态栏可见。
+- 阅读页 → 状态栏按高级设置开关显隐；左下时间显示正常。
+
+F2. 在线阅读器移除
+- 设置无“阅读器模式”选项。
+- 任意入口“阅读”都进 `local_reader`。
+
+F3. 启动 / 缓存
+- 第一次进主页 → 拉服务端；第二次冷启动 → 立刻显示缓存（即使飞行模式也不白屏），后台静默拉取。
+- 右上刷新 → 强制拉新；下拉刷新 → 同样行为。
+- 未配置服务器 → 显示空态卡片，无网络错误。
+
+F4. 本地书架
+- SAF 选文件夹 → 列表显示；进入阅读 → 最近阅读带“本地”标签。
+- 移除文件夹 → 文件夹消失，本地书记录保留但不可读。
+- 按目录浏览 → 子目录可下钻。
+
+F5. 设置
+- 主页标签三种状态切换 → 立即反映在 Tab 数。
+- 状态栏隐藏开关打开 → 阅读页状态栏消失，左下显示时间。
+- 跳过验证 → 主页只显示本地 + 设置；补齐登录后恢复。
+
+F6. 兼容性
+- `ReaderDatabase` 5 → 6 迁移；旧备份可导入（`source_kind` 默认 `library`，`source_label` 取当前激活书库名）。
+- DataStore 旧 `reader_page_margins` 拆到 `reader_page_margin_horizontal` / `reader_page_margin_vertical`。
+
+### 模块 G · 交付物 / 风险
+
+G1. 文件级落地清单
+- `app/src/main/res/values/themes.xml`
+- `app/src/main/java/com/talebook/app/MainActivity.kt`
+- `ui/screens/LocalReaderScreen.kt`、`BookDetailScreen.kt`、`SettingsScreen.kt`、`MainTabsScreen.kt`、`HomeScreen.kt`、`RecentReadingScreen.kt`、`LoginScreen.kt`、`NavGraph.kt`
+- 新增 `ui/screens/LocalLibraryScreen.kt`、`LocalFolderManageScreen.kt`
+- 新增 `util/TxtToEpubConverter.kt`
+- `data/local/ReaderEntities.kt`、`ReaderDao.kt`、`ReaderDatabase.kt`、新增 `LocalLibraryRepository.kt`
+- `viewmodel/LocalReaderViewModel.kt`、`HomeViewModel.kt`、`RecentReadingViewModel.kt`
+- `data/repository/SettingsRepository.kt`、`ReaderBackupRepository.kt`
+- 删除 `ui/screens/ReaderScreen.kt`、`viewmodel/ReaderViewModel.kt`
+- `app/build.gradle.kts`、`README.md`、`DEVELOPMENT.md`
+
+G2. 风险点
+- SAF 对 `.mobi` / `.azw3` 等格式的 MimeType 在不同 ROM 行为差异，需按扩展名兜底。
+- 本次对 `epub / pdf / txt` 提供本地阅读，其余格式入库但不渲染；后续单独迭代。
+- 多书库切换时旧 `bookId` 可能已无效，`RecentReadingItem` 应容错显示。
+- 删除在线阅读器后部分 URL 跳转可能失效，需要确认 `bookId` 链路没有遗漏。
+- `LocalLibraryRepository` 扫描大量本地书时需避免主线程阻塞，扫描过程走 `Dispatchers.IO`。
+
+### 模块 H · 不在本版本范围
+
+- 自动抓本地书元数据（封面 / 作者 / 简介）。
+- 文件夹后台监听自动刷新。
+- 大量本地书的分页 / 虚拟化。
+- 本地书与书库书的搜索 / 笔记 / 书签跨书库同步。
+
+### 模块 I · TXT 格式支持
+
+I1. 方案：TXT → 缓存 EPUB
+- txt 不直接交给 Readium 解析，而是先转换为 EPUB，再走标准 EPUB 渲染路径。
+- 转换在 `LocalReaderViewModel.loadLocalBook()` 的 TXT 分支中完成。
+- 缓存路径：`cacheDir/local_books/txt_{localBookId}_{size}_{modified}.epub`。
+- 元数据路径：`cacheDir/local_books/txt_{localBookId}.json`。
+- 缓存命中时直接复用 EPUB，不重复转换。
+
+I2. 转换器：`util/TxtToEpubConverter.kt`
+- 编码检测：UTF-8 BOM → UTF-16 BOM → UTF-8 严格检测 → GB18030 → GBK 回退。
+- 读取方式：逐行流式读取，不再 `readBytes()` 整本入内存。
+- 章节识别：支持 `第X章`、`第X回`、`序章`、`楔子`、`Chapter X` 等标题。
+- 分片策略：章节优先；单章节过大时按目标块大小拆分。
+- EPUB 打包：`mimetype` STORED、`META-INF/container.xml`、`OEBPS/content.opf`、`OEBPS/nav.xhtml`、多个 XHTML 内容页。
+- 文件尺寸上限：50MB。
+
+I3. 功能复用说明
+- 转换后的 EPUB 继续使用 `EpubReadiumSession` + `EpubNavigatorFactory`，复用所有 EPUB 能力：
+  - 书签、笔记、高亮
+  - 阅读进度自动保存与恢复
+  - 全文搜索
+  - 朗读 TTS
+  - 阅读设置（字号、亮度、滚动、页边距、主题背景/文字色）
+- 本地 TXT 的阅读体验与 EPUB 统一，不再单独做 TXT 阅读器。
+
+I4. 限制
+- 不支持 50MB 以上 TXT。
+- 缓存策略依赖源文件大小和最后修改时间；SAF 对 lastModified 支持不稳定时会回退为重新转换。
+- 目录识别是规则驱动，不保证覆盖所有文学排版。
+
+### 协作与进度追踪
+
+- 模块 A / B 是阅读器本身，单独一个 PR。
+- 模块 C / E 是启动与主页，独立一个 PR。
+- 模块 D 是本地书架，单独一个 PR。
+- 每完成一个模块，更新本文件底部“进度”小节，并写一条 README 更新日志。
+- 任何 schema 变化（Room / DataStore / 备份版本）必须在 PR 描述中标注。
+
+### 进度（已完成）
+
+- [x] 模块 A · 阅读器沉浸与体验
+- [x] 模块 B · 删除在线阅读器
+- [x] 模块 C · 登录 / 启动 / 主页缓存
+- [x] 模块 D · 本地书库
+- [x] 模块 E · 默认启动路径
+- [x] 模块 F · 测试与回归
+- [x] 模块 G · 文档与版本号
 - 扫描版 PDF/OCR 能力暂不实现；文字版 PDF 能从 Readium content 抽到文本时才复用搜索/TTS 等文本能力。
 
 ## 技术栈
@@ -365,7 +660,7 @@ adb install -r "F:\aicode\talebook-android\app\build\outputs\apk\debug\app-debug
 复制测试包到桌面：
 
 ```powershell
-Copy-Item "F:\aicode\talebook-android\app\build\outputs\apk\debug\app-debug.apk" "$env:USERPROFILE\Desktop\talebook-2.0.0-debug.apk" -Force
+Copy-Item "F:\aicode\talebook-android\app\build\outputs\apk\debug\app-debug.apk" "$env:USERPROFILE\Desktop\talebook-2.2.0-debug.apk" -Force
 ```
 
 ## 开发注意事项

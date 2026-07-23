@@ -20,7 +20,7 @@ data class AppAccentPalette(
 )
 
 object ThemePresets {
-    const val DAY_WHITE = "white"
+    const val DAY_SYSTEM = "day_system"
     const val DAY_EYE = "eye"
     const val DAY_PINK = "pink"
     const val DAY_BLUE = "blue"
@@ -28,6 +28,7 @@ object ThemePresets {
     const val DAY_CUSTOM = "custom"
 
     const val NIGHT_CHARCOAL = "charcoal"
+    const val NIGHT_SYSTEM = "night_system"
     const val NIGHT_WARM = "warm"
     const val NIGHT_BLUE = "midnight"
     const val NIGHT_GREEN = "forest"
@@ -49,8 +50,8 @@ object ThemePresets {
     }
 
     val day = listOf(
-        ReaderThemePalette(DAY_WHITE, "白色", 0xFFFAFAFAL, 0xFF222222L, 0xFFFFFFFFL, 0xFF1A73E8L),
-        ReaderThemePalette(DAY_EYE, "护眼", 0xFFF3F0D7L, 0xFF2F3424L, 0xFFFCF8E3L, 0xFF687A2FL),
+        ReaderThemePalette(DAY_SYSTEM, "系统默认", 0xFFFFFFFFL, 0xFF000000L, 0xFFFFFFFFL, 0xFF1A73E8L),
+        ReaderThemePalette(DAY_EYE, "米黄", 0xFFF3F0D7L, 0xFF2F3424L, 0xFFFCF8E3L, 0xFF687A2FL),
         ReaderThemePalette(DAY_PINK, "浅粉", 0xFFFFF0F3L, 0xFF4A2C35L, 0xFFFFF8F9L, 0xFFC65A78L),
         ReaderThemePalette(DAY_BLUE, "浅蓝", 0xFFF0F5FFL, 0xFF25364AL, 0xFFF8FBFFL, 0xFF4F75B8L),
         ReaderThemePalette(DAY_GREEN, "浅绿", 0xFFF0FAF0L, 0xFF263D2AL, 0xFFF8FFF8L, 0xFF4F8A59L),
@@ -58,6 +59,7 @@ object ThemePresets {
     )
 
     val night = listOf(
+        ReaderThemePalette(NIGHT_SYSTEM, "系统默认", 0xFF000000L, 0xFFFFFFFFL, 0xFF000000L, 0xFF9DB7F5L),
         ReaderThemePalette(NIGHT_CHARCOAL, "炭黑", 0xFF181A1BL, 0xFF969088L, 0xFF242729L, 0xFF9DB7F5L),
         ReaderThemePalette(NIGHT_WARM, "暖夜", 0xFF201B17L, 0xFFA89A8EL, 0xFF2B241EL, 0xFFD0A56AL),
         ReaderThemePalette(NIGHT_BLUE, "深蓝", 0xFF111A24L, 0xFFA1ADBAL, 0xFF1B2633L, 0xFF8AB4F8L),

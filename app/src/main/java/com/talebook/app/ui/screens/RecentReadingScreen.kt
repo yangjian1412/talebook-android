@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +24,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,7 +35,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -49,14 +55,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.talebook.app.data.api.RetrofitClient
+import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.util.resolveUrl
 import com.talebook.app.viewmodel.RecentReadingItem
 import com.talebook.app.viewmodel.RecentReadingViewModel
+import kotlinx.coroutines.flow.first
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,20 +74,34 @@ fun RecentReadingScreen(
     refreshSignal: Int = 0,
     onBookClick: (Int) -> Unit,
     onReadBook: (Int) -> Unit,
+    onReadLocalBook: (Long) -> Unit = {},
     viewModel: RecentReadingViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var editMode by remember { mutableStateOf(false) }
+    var hideSourceLabel by remember { mutableStateOf(false) }
+    var fallbackServerName by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        val settings = SettingsRepository(context)
+        val server = settings.activeLibraryServer.first()
+        fallbackServerName = server.name.ifBlank { server.baseUrl.removePrefix("https://").removePrefix("http://").substringBefore("/").substringBefore(":") }
+    }
 
-    LaunchedEffect(refreshSignal) { viewModel.load() }
+    LaunchedEffect(refreshSignal) { viewModel.load(showLoading = false) }
 
     Scaffold(
-        modifier = Modifier.padding(contentPadding),
         topBar = {
             TopAppBar(
                 title = { Text("最近阅读") },
                 actions = {
                     if (uiState.items.isNotEmpty()) {
+                        IconButton(onClick = { hideSourceLabel = !hideSourceLabel }) {
+                            Icon(
+                                imageVector = if (hideSourceLabel) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (hideSourceLabel) "显示来源标签" else "隐藏来源标签"
+                            )
+                        }
                         IconButton(onClick = {
                             editMode = !editMode
                             if (!editMode) viewModel.load()
@@ -93,24 +116,30 @@ fun RecentReadingScreen(
             )
         }
     ) { padding ->
+        val combinedPadding = PaddingValues(
+            start = padding.calculateStartPadding(LayoutDirection.Ltr),
+            top = padding.calculateTopPadding(),
+            end = padding.calculateEndPadding(LayoutDirection.Ltr),
+            bottom = padding.calculateBottomPadding() + contentPadding.calculateBottomPadding()
+        )
         when {
-            uiState.isLoading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            uiState.isLoading -> Box(Modifier.fillMaxSize().padding(combinedPadding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-            uiState.error != null -> Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+            uiState.error != null -> Box(Modifier.fillMaxSize().padding(combinedPadding).padding(24.dp), contentAlignment = Alignment.Center) {
                 Text(uiState.error ?: "加载失败", color = MaterialTheme.colorScheme.error)
             }
-            uiState.items.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+            uiState.items.isEmpty() -> Box(Modifier.fillMaxSize().padding(combinedPadding).padding(24.dp), contentAlignment = Alignment.Center) {
                 Text("还没有最近阅读，去书库找一本书开始读吧", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             else -> {
                 val items = uiState.items
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = Modifier.fillMaxSize().padding(combinedPadding),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    itemsIndexed(items, key = { _, item -> item.bookId }) { index, item ->
+                    itemsIndexed(items, key = { _, item -> "${item.serverId}-${item.bookId}" }) { index, item ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -120,8 +149,12 @@ fun RecentReadingScreen(
                                 editMode = editMode,
                                 canMoveUp = index > 0 && items[index - 1].pinned == item.pinned,
                                 canMoveDown = index < items.lastIndex && items[index + 1].pinned == item.pinned,
-                                onDetail = { onBookClick(item.bookId) },
-                                onRead = { onReadBook(item.bookId) },
+                                hideSourceLabel = hideSourceLabel,
+                                fallbackServerName = fallbackServerName,
+                                onDetail = { if (item.isLocal) Unit else onBookClick(item.bookId) },
+                                onRead = {
+                                    if (item.isLocal) onReadLocalBook(-item.bookId.toLong()) else onReadBook(item.bookId)
+                                },
                                 onTogglePinned = { viewModel.togglePinned(item) },
                                 onMoveToTop = { viewModel.moveToTop(item) },
                                 onMoveUp = { viewModel.moveUp(item) },
@@ -142,6 +175,8 @@ private fun RecentReadingBookRow(
     editMode: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
+    hideSourceLabel: Boolean,
+    fallbackServerName: String,
     onDetail: () -> Unit,
     onRead: () -> Unit,
     onTogglePinned: () -> Unit,
@@ -180,22 +215,47 @@ private fun RecentReadingBookRow(
             Spacer(Modifier.width(6.dp))
         }
         val coverUrl = resolveUrl(item.cover)
-        if (coverUrl.isNotBlank()) {
-            val cookie = RetrofitClient.cookieHeader()
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(coverUrl)
-                    .apply { if (cookie.isNotBlank()) addHeader("Cookie", cookie) }
-                    .build(),
-                contentDescription = item.title,
-                modifier = Modifier
-                    .size(width = 72.dp, height = coverHeight)
-                    .clip(MaterialTheme.shapes.small),
-                contentScale = ContentScale.FillBounds
-            )
-        } else {
-            Box(Modifier.size(width = 72.dp, height = coverHeight), contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.Book, contentDescription = null)
+        Box(modifier = Modifier.size(width = 72.dp, height = coverHeight)) {
+            if (coverUrl.isNotBlank()) {
+                val cookie = RetrofitClient.cookieHeader()
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(coverUrl)
+                        .apply { if (cookie.isNotBlank()) addHeader("Cookie", cookie) }
+                        .build(),
+                    contentDescription = item.title,
+                    modifier = Modifier
+                        .size(width = 72.dp, height = coverHeight)
+                        .clip(MaterialTheme.shapes.small),
+                    contentScale = ContentScale.FillBounds
+                )
+            } else {
+                Box(Modifier.size(width = 72.dp, height = coverHeight), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Book, contentDescription = null)
+                }
+            }
+            val displayLabel = when {
+                item.isLocal -> "本地"
+                item.sourceLabel.isNotBlank() -> item.sourceLabel
+                fallbackServerName.isNotBlank() -> fallbackServerName
+                else -> null
+            }
+            if (!hideSourceLabel && displayLabel != null) {
+                Surface(
+                    color = if (item.isLocal) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                    shape = MaterialTheme.shapes.extraSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 2.dp)
+                        .alpha(0.92f)
+                ) {
+                    Text(
+                        text = displayLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
             }
         }
         Spacer(Modifier.width(10.dp))

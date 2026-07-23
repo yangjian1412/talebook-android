@@ -103,4 +103,60 @@ interface ReaderDao {
 
     @Query("UPDATE recent_reading SET pinned = :pinned, pinnedAt = :pinnedAt WHERE serverId = :serverId AND bookId = :bookId")
     suspend fun updateRecentPinned(serverId: String, bookId: Int, pinned: Boolean, pinnedAt: Long)
+
+    @Query("SELECT * FROM local_folder ORDER BY addedAt DESC")
+    suspend fun getLocalFolders(): List<LocalFolderEntity>
+
+    @Query("SELECT * FROM local_folder ORDER BY addedAt DESC")
+    suspend fun getAllLocalFolders(): List<LocalFolderEntity>
+
+    @Query("SELECT * FROM local_folder WHERE id = :id LIMIT 1")
+    suspend fun getLocalFolder(id: Long): LocalFolderEntity?
+
+    @Query("SELECT folderId, COUNT(*) AS cnt FROM local_book WHERE available = 1 GROUP BY folderId")
+    suspend fun getAvailableBookCountByFolder(): List<FolderBookCount>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLocalFolder(folder: LocalFolderEntity): Long
+
+    @Query("DELETE FROM local_folder WHERE id = :id")
+    suspend fun deleteLocalFolder(id: Long)
+
+    @Query("SELECT * FROM local_book WHERE folderId = :folderId ORDER BY displayName COLLATE NOCASE ASC")
+    suspend fun getLocalBooksByFolder(folderId: Long): List<LocalBookEntity>
+
+    @Query("SELECT * FROM local_book WHERE available = 1 ORDER BY lastReadAt DESC, displayName COLLATE NOCASE ASC")
+    suspend fun getAvailableLocalBooks(): List<LocalBookEntity>
+
+    @Query("SELECT * FROM local_book ORDER BY displayName COLLATE NOCASE ASC")
+    suspend fun getAllLocalBooks(): List<LocalBookEntity>
+
+    @Query("SELECT * FROM local_book WHERE id = :id LIMIT 1")
+    suspend fun getLocalBook(id: Long): LocalBookEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLocalBook(book: LocalBookEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLocalBooks(books: List<LocalBookEntity>)
+
+    @Query("UPDATE local_book SET folderId = :folderId, available = :available, sizeBytes = :sizeBytes WHERE id = :id")
+    suspend fun updateLocalBookAvailability(id: Long, folderId: Long?, available: Boolean, sizeBytes: Long)
+
+    @Query("UPDATE local_book SET lastReadAt = :now WHERE id = :id")
+    suspend fun touchLocalBook(id: Long, now: Long)
+
+    @Query("UPDATE local_book SET folderId = NULL, available = 0 WHERE folderId = :folderId")
+    suspend fun markLocalBooksUnavailableByFolder(folderId: Long)
+
+    @Query("DELETE FROM local_book WHERE folderId = :folderId")
+    suspend fun deleteLocalBooksByFolder(folderId: Long)
+
+    @Query("DELETE FROM local_book WHERE id = :id")
+    suspend fun deleteLocalBook(id: Long)
 }
+
+data class FolderBookCount(
+    val folderId: Long,
+    val cnt: Int
+)

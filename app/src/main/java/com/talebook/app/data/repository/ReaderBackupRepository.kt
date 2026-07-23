@@ -7,6 +7,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.talebook.app.data.local.LocalBookEntity
+import com.talebook.app.data.local.LocalFolderEntity
 import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.local.ReaderBookmarkEntity
 import com.talebook.app.data.local.ReaderDatabase
@@ -21,12 +23,15 @@ import java.util.Date
 import java.util.Locale
 
 data class ReaderBackup(
-    val version: Int = 2,
+    val version: Int = 4,
     val exportedAt: Long = System.currentTimeMillis(),
+    val baseUrl: String = "",
     val progress: List<ReadingProgressEntity>,
     val bookmarks: List<ReaderBookmarkEntity>,
     val annotations: List<ReaderAnnotationEntity>,
-    val recentReading: List<RecentReadingEntity> = emptyList()
+    val recentReading: List<RecentReadingEntity> = emptyList(),
+    val localFolders: List<LocalFolderEntity> = emptyList(),
+    val localBooks: List<LocalBookEntity> = emptyList()
 )
 
 data class ReaderNoteBookSummary(
@@ -43,12 +48,18 @@ class ReaderBackupRepository {
     suspend fun exportToDownloads(context: Context): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val dao = ReaderDatabase.get(context).readerDao()
-            val serverId = SettingsRepository(context.applicationContext).activeLibraryServerId.first()
+            val settings = SettingsRepository(context.applicationContext)
+            val serverId = settings.activeLibraryServerId.first()
+            val activeServer = settings.activeLibraryServer.first()
             val backup = ReaderBackup(
+                version = 4,
+                baseUrl = activeServer.baseUrl,
                 progress = dao.getAllProgress(serverId),
                 bookmarks = dao.getAllBookmarks(serverId),
                 annotations = dao.getAllAnnotations(serverId),
-                recentReading = dao.getRecentReading(serverId)
+                recentReading = dao.getRecentReading(serverId),
+                localFolders = dao.getAllLocalFolders(),
+                localBooks = dao.getAllLocalBooks()
             )
             val json = gson.toJson(backup)
             val fileName = "talebook-reader-backup-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())}.json"
@@ -113,32 +124,84 @@ class ReaderBackupRepository {
             val type = object : TypeToken<ReaderBackup>() {}.type
             val backup: ReaderBackup = gson.fromJson(json, type)
             val dao = ReaderDatabase.get(context).readerDao()
-            val serverId = SettingsRepository(context.applicationContext).activeLibraryServerId.first()
-            backup.progress.forEach { dao.saveProgress(it.copy(serverId = it.serverId.ifBlank { serverId })) }
-            val existingBookmarks = dao.getAllBookmarks(serverId).map { it.bookId to it.locatorJson }.toSet()
-            val bookmarks = backup.bookmarks
-                .filter { (it.bookId to it.locatorJson) !in existingBookmarks }
-                .map { it.copy(id = 0, serverId = it.serverId.ifBlank { serverId }) }
-            if (bookmarks.isNotEmpty()) dao.addBookmarks(bookmarks)
+            val settings = SettingsRepository(context.applicationContext)
 
-            val existingAnnotations = dao.getAllAnnotations(serverId)
-                .map { Triple(it.bookId, it.locatorJson, it.selectedText) }
-                .toSet()
-            val annotations = backup.annotations
-                .filter { Triple(it.bookId, it.locatorJson, it.selectedText) !in existingAnnotations }
-                .map { it.copy(id = 0, serverId = it.serverId.ifBlank { serverId }) }
-            if (annotations.isNotEmpty()) dao.saveAnnotations(annotations)
-            var recentCount = 0
-            if (backup.recentReading.isNotEmpty()) {
-                val existingRecents = dao.getRecentReading(serverId).map { it.bookId }.toSet()
+            val hasServerData = backup.progress.isNotEmpty() || backup.bookmarks.isNotEmpty() || backup.annotations.isNotEmpty() || backup.recentReading.isNotEmpty()
+            val hasLocalData = backup.localFolders.isNotEmpty() || backup.localBooks.isNotEmpty()
+
+            val matchedServerId = if (backup.version >= 4 && backup.baseUrl.isNotBlank()) {
+                settings.libraryServers.first().firstOrNull { it.baseUrl == backup.baseUrl }?.id
+            } else {
+                null
+            }
+
+            val hasExistingLocalFolders = hasLocalData && dao.getAllLocalFolders().isNotEmpty()
+
+            val serverSkipped = hasServerData && matchedServerId == null
+            val localSkipped = hasLocalData && !hasExistingLocalFolders
+
+            if (!serverSkipped && matchedServerId != null) {
+                val sid = matchedServerId
+                backup.progress.forEach { dao.saveProgress(it.copy(serverId = sid)) }
+                val existingBookmarks = dao.getAllBookmarks(sid).map { it.bookId to it.locatorJson }.toSet()
+                val bookmarks = backup.bookmarks
+                    .filter { (it.bookId to it.locatorJson) !in existingBookmarks }
+                    .map { it.copy(id = 0, serverId = sid) }
+                if (bookmarks.isNotEmpty()) dao.addBookmarks(bookmarks)
+                val existingAnnotations = dao.getAllAnnotations(sid)
+                    .map { Triple(it.bookId, it.locatorJson, it.selectedText) }
+                    .toSet()
+                val annotations = backup.annotations
+                    .filter { Triple(it.bookId, it.locatorJson, it.selectedText) !in existingAnnotations }
+                    .map { it.copy(id = 0, serverId = sid) }
+                if (annotations.isNotEmpty()) dao.saveAnnotations(annotations)
                 backup.recentReading.forEach { entry ->
+                    val existingRecents = dao.getRecentReading(sid).map { it.bookId }.toSet()
                     if (entry.bookId !in existingRecents) {
-                        dao.upsertRecentEntry(entry.copy(serverId = entry.serverId.ifBlank { serverId }))
-                        recentCount++
+                        dao.upsertRecentEntry(entry.copy(serverId = sid))
                     }
                 }
             }
-            "已导入：进度 ${backup.progress.size}，书签 ${bookmarks.size}/${backup.bookmarks.size}，笔记 ${annotations.size}/${backup.annotations.size}，最近阅读 ${recentCount}/${backup.recentReading.size}"
+
+            if (!localSkipped) {
+                val existingUris = dao.getAllLocalFolders().map { it.rootUri }.toSet()
+                backup.localFolders.forEach { folder ->
+                    if (folder.rootUri !in existingUris) {
+                        dao.upsertLocalFolder(folder.copy(id = 0))
+                    }
+                }
+                val existingBookUris = dao.getAllLocalBooks().map { it.documentUri }.toSet()
+                backup.localBooks.forEach { book ->
+                    if (book.documentUri !in existingBookUris) {
+                        dao.upsertLocalBook(book.copy(id = 0))
+                    }
+                }
+            }
+
+            buildString {
+                append("导入完成：")
+                val parts = mutableListOf<String>()
+                if (!serverSkipped && matchedServerId != null) {
+                    parts.add("进度 ${backup.progress.size}")
+                }
+                parts.add("书签 ${backup.bookmarks.size}")
+                parts.add("笔记 ${backup.annotations.size}")
+                if (matchedServerId != null) {
+                    val recentCount = backup.recentReading.size
+                    if (recentCount > 0) parts.add("最近阅读 $recentCount")
+                }
+                if (!localSkipped) {
+                    if (backup.localFolders.isNotEmpty()) parts.add("本地文件夹 ${backup.localFolders.size}")
+                    if (backup.localBooks.isNotEmpty()) parts.add("本地图书 ${backup.localBooks.size}")
+                }
+                append(parts.joinToString("，"))
+                if (serverSkipped) {
+                    append("。部分服务器数据未导入（进度/书签/笔记/最近阅读），请先配置对应服务器后再重新导入")
+                }
+                if (localSkipped) {
+                    append("。部分本地书架数据未导入，请先添加本地文件夹后再重新导入")
+                }
+            }
         }
     }
 

@@ -13,9 +13,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ReaderBookmarkEntity::class,
         ReaderAnnotationEntity::class,
         ReaderCacheEntity::class,
-        RecentReadingEntity::class
+        RecentReadingEntity::class,
+        LocalFolderEntity::class,
+        LocalBookEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class ReaderDatabase : RoomDatabase() {
@@ -71,6 +73,45 @@ abstract class ReaderDatabase : RoomDatabase() {
                 }
                 database.execSQL("DROP INDEX IF EXISTS index_recent_reading_serverId_sortIndex")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_recent_reading_serverId_pinned_pinnedAt_sortIndex ON recent_reading(serverId, pinned, pinnedAt, sortIndex)")
+            }
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                if (!hasColumn(database, "recent_reading", "sourceKind")) {
+                    database.execSQL("ALTER TABLE recent_reading ADD COLUMN sourceKind TEXT NOT NULL DEFAULT 'library'")
+                }
+                if (!hasColumn(database, "recent_reading", "sourceLabel")) {
+                    database.execSQL("ALTER TABLE recent_reading ADD COLUMN sourceLabel TEXT NOT NULL DEFAULT ''")
+                }
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_folder (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        displayName TEXT NOT NULL,
+                        rootUri TEXT NOT NULL,
+                        addedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_book (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        folderId INTEGER,
+                        documentUri TEXT NOT NULL,
+                        displayName TEXT NOT NULL,
+                        relativePath TEXT NOT NULL,
+                        format TEXT NOT NULL,
+                        sizeBytes INTEGER NOT NULL,
+                        available INTEGER NOT NULL,
+                        lastReadAt INTEGER NOT NULL,
+                        importedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_local_book_folderId ON local_book(folderId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_local_book_available ON local_book(available)")
             }
         }
 
@@ -177,7 +218,7 @@ abstract class ReaderDatabase : RoomDatabase() {
                 context.applicationContext,
                 ReaderDatabase::class.java,
                 "reader.db"
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { INSTANCE = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { INSTANCE = it }
         }
     }
 }

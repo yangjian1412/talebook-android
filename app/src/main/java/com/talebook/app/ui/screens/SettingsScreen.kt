@@ -18,23 +18,31 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import com.talebook.app.data.repository.LibraryServerConfig
+import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.data.repository.AuthRepository
+import com.talebook.app.data.repository.LibraryServerConfig
+import com.talebook.app.data.repository.LoginResult
 import com.talebook.app.data.repository.ReaderBackupRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.ui.theme.AppAccentPalette
 import com.talebook.app.ui.theme.ThemePresets
 import com.talebook.app.ui.theme.toColor
+import com.talebook.app.ui.screens.CompactSwitch
+import com.talebook.app.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,7 +54,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit,
     onOpenCacheList: () -> Unit = {},
-    onOpenNotesManagement: () -> Unit = {}
+    onOpenNotesManagement: () -> Unit = {},
+    onOpenLocalLibrary: () -> Unit = {}
 ) {
     val nickname by settingsRepository.nickname.collectAsState(initial = "")
     val loginMode by settingsRepository.loginMode.collectAsState(initial = "")
@@ -55,7 +64,10 @@ fun SettingsScreen(
     val startTab by settingsRepository.startTab.collectAsState(initial = SettingsRepository.START_TAB_RECENT)
     val servers by settingsRepository.libraryServers.collectAsState(initial = emptyList())
     val activeServerId by settingsRepository.activeLibraryServerId.collectAsState(initial = SettingsRepository.DEFAULT_SERVER_ID)
-    val readerMode by settingsRepository.readerMode.collectAsState(initial = SettingsRepository.READER_LOCAL)
+    val skipAuth by settingsRepository.skipAuth.collectAsState(initial = false)
+    val homeTabs by settingsRepository.homeTabs.collectAsState(initial = SettingsRepository.HOME_TABS_BOTH)
+    val autoRefreshHomeOnEnter by settingsRepository.readerAutoRefreshHomeOnEnter.collectAsState(initial = false)
+    val showTabLabel by settingsRepository.showTabLabel.collectAsState(initial = true)
     val cacheLimitMb by settingsRepository.readerCacheLimitMb.collectAsState(initial = SettingsRepository.DEFAULT_CACHE_LIMIT_MB)
     val autoCacheOnWifi by settingsRepository.readerAutoCacheOnWifi.collectAsState(initial = false)
     val context = LocalContext.current
@@ -71,6 +83,17 @@ fun SettingsScreen(
     val authRepository = remember { AuthRepository() }
     val readerCacheRepository = remember { ReaderCacheRepository() }
     val readerBackupRepository = remember { ReaderBackupRepository() }
+
+    LaunchedEffect(homeTabs) {
+        val valid = when (homeTabs) {
+            SettingsRepository.HOME_TABS_LOCAL -> startTab == SettingsRepository.START_TAB_RECENT || startTab == SettingsRepository.START_TAB_LOCAL || startTab == SettingsRepository.START_TAB_SETTINGS
+            SettingsRepository.HOME_TABS_LIBRARY -> startTab == SettingsRepository.START_TAB_RECENT || startTab == SettingsRepository.START_TAB_LIBRARY || startTab == SettingsRepository.START_TAB_SETTINGS
+            else -> true
+        }
+        if (!valid) {
+            scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_RECENT) }
+        }
+    }
 
     if (showLogoutDialog) {
         AlertDialog(
@@ -110,7 +133,10 @@ fun SettingsScreen(
                         showImportDialog = false
                         scope.launch {
                             readerBackupRepository.importLatestFromDownloads(context.applicationContext).fold(
-                                onSuccess = { msg -> backupMessage = msg },
+                                onSuccess = { msg ->
+                                    backupMessage = msg
+                                    HomeViewModel.clearCache(context.applicationContext)
+                                },
                                 onFailure = { e -> backupMessage = e.message ?: "导入失败" }
                             )
                         }
@@ -123,13 +149,28 @@ fun SettingsScreen(
         )
     }
 
+    val activeServer by settingsRepository.activeLibraryServer.collectAsState(initial = null)
+
     if (showServerDialog) {
         ServerEditDialog(
             server = editingServer,
+            defaultName = activeServer?.name.orEmpty(),
             onDismiss = { showServerDialog = false; editingServer = null },
             onSave = { server ->
                 scope.launch {
-                    settingsRepository.upsertLibraryServer(server)
+                    val id = settingsRepository.upsertLibraryServer(server)
+                    RetrofitClient.updateBaseUrl(server.baseUrl)
+                    val authRepo = AuthRepository()
+                    val loginResult = when (server.loginMode) {
+                        "password" -> authRepo.loginWithPassword(server.username, server.password)
+                        "code" -> authRepo.loginWithCode(server.accessCode)
+                        "guest" -> authRepo.loginWithPassword("", "")
+                        else -> LoginResult.Failure("unknown mode")
+                    }
+                    if (loginResult is com.talebook.app.data.repository.LoginResult.Success) {
+                        settingsRepository.saveLoginInfo(loginResult.mode, loginResult.username, loginResult.nickname)
+                        settingsRepository.saveLoginSecret(loginResult.mode, loginResult.username, server.password, server.accessCode, loginResult.nickname)
+                    }
                     showServerDialog = false
                     editingServer = null
                 }
@@ -270,30 +311,107 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             Text(
-                text = "阅读器",
+                text = "主页与标签",
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "显示哪些标签",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(modifier = Modifier.height(4.dp))
             Column(modifier = Modifier.selectableGroup()) {
                 ReaderOptionRow(
-                    selected = readerMode == SettingsRepository.READER_LOCAL,
+                    selected = homeTabs == SettingsRepository.HOME_TABS_BOTH,
                     icon = Icons.Default.MenuBook,
-                    label = "使用本地阅读器",
-                    description = "Readium 内核，支持离线、进度、书签、笔记、TTS",
+                    label = "书库 + 本地",
+                    description = "同时显示书库与本地书架 Tab",
                     onSelect = {
-                        scope.launch { settingsRepository.saveReaderMode(SettingsRepository.READER_LOCAL) }
+                        scope.launch { settingsRepository.saveHomeTabs(SettingsRepository.HOME_TABS_BOTH) }
                     }
                 )
                 ReaderOptionRow(
-                    selected = readerMode == SettingsRepository.READER_ONLINE,
+                    selected = homeTabs == SettingsRepository.HOME_TABS_LIBRARY,
                     icon = Icons.Default.Public,
-                    label = "使用在线阅读器",
-                    description = "使用 talebook 网页阅读器作为兜底",
+                    label = "只显示书库",
+                    description = "隐藏本地书架 Tab",
                     onSelect = {
-                        scope.launch { settingsRepository.saveReaderMode(SettingsRepository.READER_ONLINE) }
+                        scope.launch { settingsRepository.saveHomeTabs(SettingsRepository.HOME_TABS_LIBRARY) }
+                    }
+                )
+                ReaderOptionRow(
+                    selected = homeTabs == SettingsRepository.HOME_TABS_LOCAL,
+                    icon = Icons.Default.Folder,
+                    label = "只显示本地",
+                    description = "隐藏书库 Tab",
+                    onSelect = {
+                        scope.launch { settingsRepository.saveHomeTabs(SettingsRepository.HOME_TABS_LOCAL) }
                     }
                 )
             }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "主页是哪个",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Column(modifier = Modifier.selectableGroup()) {
+                ThemeOptionRow(
+                    selected = startTab == SettingsRepository.START_TAB_RECENT,
+                    icon = Icons.Default.MenuBook,
+                    label = "最近阅读",
+                    onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_RECENT) } }
+                )
+                if (homeTabs != SettingsRepository.HOME_TABS_LOCAL) {
+                    ThemeOptionRow(
+                        selected = startTab == SettingsRepository.START_TAB_LIBRARY,
+                        icon = Icons.Default.Public,
+                        label = "书库",
+                        onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_LIBRARY) } }
+                    )
+                }
+                if (homeTabs != SettingsRepository.HOME_TABS_LIBRARY) {
+                    ThemeOptionRow(
+                        selected = startTab == SettingsRepository.START_TAB_LOCAL,
+                        icon = Icons.Default.Folder,
+                        label = "本地书架",
+                        onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_LOCAL) } }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("底部标签显示中文")
+                CompactSwitch(
+                    checked = showTabLabel,
+                    onCheckedChange = { value ->
+                        scope.launch { settingsRepository.saveShowTabLabel(value) }
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("进入书库自动更新")
+                CompactSwitch(
+                    checked = autoRefreshHomeOnEnter,
+                    onCheckedChange = { value ->
+                        scope.launch { settingsRepository.saveReaderAutoRefreshHomeOnEnter(value) }
+                    }
+                )
+            }
+            Text(
+                text = "开启后进入书库主页会立即向服务端拉新数据；关闭时仅显示缓存，需要手动刷新。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -423,34 +541,12 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             Text(
-                text = "启动页面",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Column(modifier = Modifier.selectableGroup()) {
-                ThemeOptionRow(
-                    selected = startTab == SettingsRepository.START_TAB_RECENT,
-                    icon = Icons.Default.MenuBook,
-                    label = "最近阅读",
-                    onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_RECENT) } }
-                )
-                ThemeOptionRow(
-                    selected = startTab == SettingsRepository.START_TAB_LIBRARY,
-                    icon = Icons.Default.Public,
-                    label = "书库",
-                    onSelect = { scope.launch { settingsRepository.saveStartTab(SettingsRepository.START_TAB_LIBRARY) } }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            Text(
                 text = "关于",
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.1.0",
+                text = "Tale Book v2.2.0",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -460,7 +556,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "更新日志：三标签首页、多书库配置、本地最近阅读、Readium 阅读器缓存/笔记/主题优化。",
+                text = "更新日志：移除在线阅读器；全局隐藏导航栏；阅读状态栏可隐藏；左右/上下独立页边距；主页缓存首屏 + 右上/下拉刷新；跳过验证直接进入；本地书架 (SAF 文件夹、不复制)；最近阅读来源标签。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -566,10 +662,11 @@ private fun AccentPicker(
 @Composable
 private fun ServerEditDialog(
     server: LibraryServerConfig?,
+    defaultName: String = "",
     onDismiss: () -> Unit,
     onSave: (LibraryServerConfig) -> Unit
 ) {
-    var name by remember(server) { mutableStateOf(server?.name.orEmpty()) }
+    var name by remember(server, defaultName) { mutableStateOf(server?.name ?: defaultName) }
     var baseUrl by remember(server) { mutableStateOf(server?.baseUrl ?: "https://") }
     var username by remember(server) { mutableStateOf(server?.username.orEmpty()) }
     var password by remember(server) { mutableStateOf(server?.password.orEmpty()) }
@@ -606,6 +703,11 @@ private fun ServerEditDialog(
                         onClick = { loginMode = "code" },
                         label = { Text("访问码") }
                     )
+                    FilterChip(
+                        selected = loginMode == "guest",
+                        onClick = { loginMode = "guest" },
+                        label = { Text("访客登录") }
+                    )
                 }
                 if (loginMode == "password") {
                     OutlinedTextField(
@@ -620,15 +722,22 @@ private fun ServerEditDialog(
                         onValueChange = { password = it },
                         label = { Text("密码") },
                         singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
                     )
-                } else {
+                } else if (loginMode == "code") {
                     OutlinedTextField(
                         value = accessCode,
                         onValueChange = { accessCode = it },
                         label = { Text("访问码") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text(
+                        text = "访客登录无需填写凭据，保存后可直接连接。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong
 sealed interface ReadiumSession {
     val id: Long
     val bookId: Int
+    val serverId: String
     val publication: Publication
     val initialLocator: Locator?
     val isRemote: Boolean
@@ -21,6 +22,7 @@ sealed interface ReadiumSession {
 data class EpubReadiumSession(
     override val id: Long,
     override val bookId: Int,
+    override val serverId: String,
     override val publication: Publication,
     override val initialLocator: Locator?,
     override val isRemote: Boolean,
@@ -32,6 +34,7 @@ data class EpubReadiumSession(
 data class PdfReadiumSession(
     override val id: Long,
     override val bookId: Int,
+    override val serverId: String,
     override val publication: Publication,
     override val initialLocator: Locator?,
     override val isRemote: Boolean,

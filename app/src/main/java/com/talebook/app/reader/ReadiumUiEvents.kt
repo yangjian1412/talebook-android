@@ -16,6 +16,10 @@ object ReadiumUiEvents {
     private val _goToPage = MutableSharedFlow<Pair<Long, Int>>(extraBufferCapacity = 8)
     private val _progress = MutableSharedFlow<Pair<Long, Double>>(extraBufferCapacity = 16)
     private val _readerSettings = MutableSharedFlow<Pair<Long, ReaderDisplaySettings>>(extraBufferCapacity = 16)
+    private val _readerThemeChanged = MutableSharedFlow<Pair<Long, ReaderDisplaySettings>>(extraBufferCapacity = 8)
+    private val _readerInteractions = MutableSharedFlow<Long>(extraBufferCapacity = 16)
+    private val _goForwardKey = MutableSharedFlow<Long>(extraBufferCapacity = 8)
+    private val _goBackwardKey = MutableSharedFlow<Long>(extraBufferCapacity = 8)
     val centerTaps = _centerTaps.asSharedFlow()
     val addBookmarks = _addBookmarks.asSharedFlow()
     val addNotes = _addNotes.asSharedFlow()
@@ -28,6 +32,10 @@ object ReadiumUiEvents {
     val goToPage = _goToPage.asSharedFlow()
     val progress = _progress.asSharedFlow()
     val readerSettings = _readerSettings.asSharedFlow()
+    val readerThemeChanged = _readerThemeChanged.asSharedFlow()
+    val readerInteractions = _readerInteractions.asSharedFlow()
+    val goForwardKey = _goForwardKey.asSharedFlow()
+    val goBackwardKey = _goBackwardKey.asSharedFlow()
 
     fun emitCenterTap(sessionId: Long, locatorJson: String) {
         _centerTaps.tryEmit(sessionId to locatorJson)
@@ -76,6 +84,22 @@ object ReadiumUiEvents {
     fun emitReaderSettings(sessionId: Long, settings: ReaderDisplaySettings) {
         _readerSettings.tryEmit(sessionId to settings)
     }
+
+    fun emitReaderThemeChanged(sessionId: Long, settings: ReaderDisplaySettings) {
+        _readerThemeChanged.tryEmit(sessionId to settings)
+    }
+
+    fun emitReaderInteraction(sessionId: Long) {
+        _readerInteractions.tryEmit(sessionId)
+    }
+
+    fun emitGoForwardKey(sessionId: Long) {
+        _goForwardKey.tryEmit(sessionId)
+    }
+
+    fun emitGoBackwardKey(sessionId: Long) {
+        _goBackwardKey.tryEmit(sessionId)
+    }
 }
 
 data class ReaderDisplaySettings(
@@ -90,13 +114,16 @@ data class ReaderDisplaySettings(
     val appDark: Boolean = false,
     val pageTurnMode: ReaderPageTurnMode = ReaderPageTurnMode.INVERTED_L,
     val pageMargins: Float = 1.0f,
+    val pageMarginHorizontal: Float = 1.0f,
+    val pageMarginVertical: Float = 1.0f,
+    val pageMarginSeparateMode: Boolean = false,
     val paragraphSpacing: Float = 1.0f,
     val publisherStyles: Boolean = true,
     val forcePublisherFonts: Boolean = false,
     val keepScreenOn: Boolean = false,
     val pageAnimation: ReaderPageAnimation = ReaderPageAnimation.SMOOTH,
     val forceTapAnimation: Boolean = true,
-    val scrollTapPageTurn: Boolean = true,
+    val scrollTapPageTurn: ReaderScrollTapSpeed = ReaderScrollTapSpeed.MEDIUM,
     val scrollKeepLine: Boolean = true,
     val volumeKeyPageTurn: Boolean = false,
     val letterSpacing: Float = 0f,
@@ -136,4 +163,19 @@ enum class ReaderPageAnimation {
     COVER,
     OVERRIDE,
     NONE
+}
+
+enum class ReaderScrollTapSpeed {
+    OFF,
+    FAST,
+    MEDIUM,
+    SLOW;
+
+    val durationMs: Int
+        get() = when (this) {
+            OFF -> 0
+            FAST -> 300
+            MEDIUM -> 600
+            SLOW -> 900
+        }
 }

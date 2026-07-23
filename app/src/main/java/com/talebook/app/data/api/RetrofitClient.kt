@@ -10,7 +10,7 @@ import android.webkit.CookieManager
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
-    private var baseUrl = "https://book.liufenyi.xyz:9973/"
+    private var baseUrl = ""
     private var api: TalebookApi? = null
     private var client: OkHttpClient? = null
 

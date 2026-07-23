@@ -8,9 +8,10 @@ import com.talebook.app.data.repository.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-enum class LoginMode { CODE, PASSWORD }
+enum class LoginMode { CODE, PASSWORD, GUEST }
 
 data class LoginUiState(
     val mode: LoginMode = LoginMode.PASSWORD,
@@ -29,6 +30,24 @@ class LoginViewModel(
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val server = settingsRepository.activeLibraryServer.first()
+            _uiState.value = when (server.loginMode) {
+                "password" -> _uiState.value.copy(
+                    mode = LoginMode.PASSWORD,
+                    username = server.username,
+                    password = server.password
+                )
+                "code" -> _uiState.value.copy(
+                    mode = LoginMode.CODE,
+                    code = server.accessCode
+                )
+                else -> _uiState.value
+            }
+        }
+    }
 
     fun setMode(mode: LoginMode) {
         _uiState.value = _uiState.value.copy(mode = mode, error = null)
@@ -67,6 +86,9 @@ class LoginViewModel(
                         return@launch
                     }
                     authRepository.loginWithPassword(state.username, state.password)
+                }
+                LoginMode.GUEST -> {
+                    authRepository.loginWithPassword("", "")
                 }
             }
 
