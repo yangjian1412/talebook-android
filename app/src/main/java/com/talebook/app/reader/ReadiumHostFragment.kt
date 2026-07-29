@@ -520,12 +520,14 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
             }
         }
         if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
-            val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !settings.forcePublisherFonts
-            val readiumFontFamily = when (settings.fontFamily) {
-                ReaderFontFamily.DEFAULT -> if (avoidLargePublisherFonts) org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF else null
-                ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
-                ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
-                ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
+            val overridePublisher = !settings.forcePublisherFonts
+            val readiumFontFamily = when {
+                !overridePublisher -> null
+                settings.fontFamily == ReaderFontFamily.DEFAULT -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
+                settings.fontFamily == ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
+                settings.fontFamily == ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
+                settings.fontFamily == ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
+                else -> null
             }
             navigator.submitPreferences(
                 EpubPreferences(
@@ -541,14 +543,14 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     textColor = readiumColorOrNull(settings.readerTextColor)
                 )
             )
-            injectCustomCss(navigator, settings, avoidLargePublisherFonts)
+            injectCustomCss(navigator, settings, overridePublisher)
         }
     }
 
-    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean) {
+    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, overridePublisher: Boolean) {
         val css = buildString {
-            if (avoidLargePublisherFonts) {
-                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
+            if (overridePublisher) {
+                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; font-size: inherit !important; }")
             }
         }
         if (css.isEmpty()) return
