@@ -10,7 +10,7 @@ import android.webkit.CookieManager
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
-    private var baseUrl = "https://book.liufenyi.xyz:9973/"
+    private var baseUrl = ""
     private var api: TalebookApi? = null
     private var client: OkHttpClient? = null
 
@@ -45,7 +45,7 @@ object RetrofitClient {
     }
 
     fun updateBaseUrl(url: String, clearCookies: Boolean = false) {
-        val normalized = if (url.endsWith("/")) url else "$url/"
+        val normalized = if (url.isBlank()) "" else if (url.endsWith("/")) url else "$url/"
         if (normalized != baseUrl) {
             baseUrl = normalized
             api = null

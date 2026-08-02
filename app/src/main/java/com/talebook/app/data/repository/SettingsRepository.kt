@@ -104,7 +104,6 @@ class SettingsRepository(private val context: Context) {
         private val LIBRARY_SERVERS_KEY = stringPreferencesKey("library_servers_json")
         private val ACTIVE_LIBRARY_SERVER_ID_KEY = stringPreferencesKey("active_library_server_id")
         private val START_TAB_KEY = stringPreferencesKey("start_tab")
-        private const val DEFAULT_URL = "https://book.liufenyi.xyz:9973"
         const val DEFAULT_CACHE_LIMIT_MB = 1024
     }
 
@@ -747,12 +746,11 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
     }
 
     private fun normalizeUrl(url: String): String {
-        val trimmed = url.trim().trimEnd('/')
-        return trimmed.ifBlank { DEFAULT_URL }
+        return url.trim().trimEnd('/')
     }
 
     private fun defaultServer(prefs: Preferences): LibraryServerConfig {
-        val url = normalizeUrl(prefs[SERVER_URL_KEY] ?: DEFAULT_URL)
+        val url = normalizeUrl(prefs[SERVER_URL_KEY] ?: "")
         return LibraryServerConfig(
             id = DEFAULT_SERVER_ID,
             name = "默认书库",

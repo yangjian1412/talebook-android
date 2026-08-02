@@ -52,7 +52,7 @@ fun LoginScreen(
     val viewModel: LoginViewModel = viewModel(factory = factory)
     val uiState by viewModel.uiState.collectAsState()
 
-    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "https://book.liufenyi.xyz:9973")
+    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "")
     val serverName by settingsRepository.serverName.collectAsState(initial = "")
     var showServerConfig by remember { mutableStateOf(false) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
@@ -135,7 +135,7 @@ fun LoginScreen(
                             value = editUrl,
                             onValueChange = { editUrl = it; urlSavedHint = false },
                             label = { Text("服务器地址") },
-                            placeholder = { Text("https://book.liufenyi.xyz:9973") },
+                            placeholder = { Text("https://你的服务器地址") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
