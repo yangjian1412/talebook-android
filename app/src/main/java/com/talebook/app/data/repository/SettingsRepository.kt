@@ -104,7 +104,7 @@ class SettingsRepository(private val context: Context) {
         private val LIBRARY_SERVERS_KEY = stringPreferencesKey("library_servers_json")
         private val ACTIVE_LIBRARY_SERVER_ID_KEY = stringPreferencesKey("active_library_server_id")
         private val START_TAB_KEY = stringPreferencesKey("start_tab")
-        private const val DEFAULT_URL = "http://invalid"
+        private const val DEFAULT_URL = "https://book.liufenyi.xyz:9973"
         const val DEFAULT_CACHE_LIMIT_MB = 1024
     }
 

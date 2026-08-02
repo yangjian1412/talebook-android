@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Check
@@ -35,7 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.ui.draw.alpha
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,8 +48,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -57,7 +59,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.talebook.app.data.api.RetrofitClient
@@ -133,34 +138,51 @@ fun RecentReadingScreen(
                 Text("还没有最近阅读，去书库找一本书开始读吧", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             else -> {
-                val items = uiState.items
+                val items = remember(uiState.items) { uiState.items.toMutableStateList() }
+                val lazyListState = rememberLazyListState()
+                val reorderState = rememberReorderableLazyListState(
+                    lazyListState = lazyListState,
+                    onMove = { from, to ->
+                        items.add(to.index, items.removeAt(from.index))
+                        viewModel.reorder(items.toList())
+                    }
+                )
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(combinedPadding),
+                    state = lazyListState,
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxSize().padding(combinedPadding)
                 ) {
                     itemsIndexed(items, key = { _, item -> "${item.serverId}-${item.bookId}" }) { index, item ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                        ) {
-                            RecentReadingBookRow(
-                                item = item,
-                                editMode = editMode,
-                                canMoveUp = index > 0 && items[index - 1].pinned == item.pinned,
-                                canMoveDown = index < items.lastIndex && items[index + 1].pinned == item.pinned,
-                                hideSourceLabel = hideSourceLabel,
-                                fallbackServerName = fallbackServerName,
-                                onDetail = { if (item.isLocal) Unit else onBookClick(item.bookId) },
-                                onRead = {
-                                    if (item.isLocal) onReadLocalBook(-item.bookId.toLong()) else onReadBook(item.bookId)
-                                },
-                                onTogglePinned = { viewModel.togglePinned(item) },
-                                onMoveToTop = { viewModel.moveToTop(item) },
-                                onMoveUp = { viewModel.moveUp(item) },
-                                onMoveDown = { viewModel.moveDown(item) },
-                                onDelete = { viewModel.remove(item) }
-                            )
+                        ReorderableItem(
+                            state = reorderState,
+                            key = "${item.serverId}-${item.bookId}"
+                        ) { isDragging ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(if (editMode) Modifier.longPressDraggableHandle() else Modifier)
+                                    .then(if (isDragging) Modifier.zIndex(1f) else Modifier),
+                                elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 8.dp else 1.dp)
+                            ) {
+                                RecentReadingBookRow(
+                                    item = item,
+                                    editMode = editMode,
+                                    canMoveUp = index > 0 && items[index - 1].pinned == item.pinned,
+                                    canMoveDown = index < items.lastIndex && items[index + 1].pinned == item.pinned,
+                                    hideSourceLabel = hideSourceLabel,
+                                    fallbackServerName = fallbackServerName,
+                                    onDetail = { if (item.isLocal) Unit else onBookClick(item.bookId) },
+                                    onRead = {
+                                        if (item.isLocal) onReadLocalBook(-item.bookId.toLong()) else onReadBook(item.bookId)
+                                    },
+                                    onTogglePinned = { viewModel.togglePinned(item) },
+                                    onMoveToTop = { viewModel.moveToTop(item) },
+                                    onMoveUp = { viewModel.moveUp(item) },
+                                    onMoveDown = { viewModel.moveDown(item) },
+                                    onDelete = { viewModel.remove(item) }
+                                )
+                            }
                         }
                     }
                 }

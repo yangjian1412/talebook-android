@@ -1,10 +1,18 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.1b`
+> 当前版本：`2.2.2alpha`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.2.2alpha 更新日志
+
+- 朗读锁屏播放：开启朗读后锁屏可继续播放（后台 Foreground Service + WakeLock 实现，无通知栏控件）。
+- 朗读设置面板：改为从顶部滑入的浮动面板，与迷你播放条上下共存。
+- 朗读控制图标化：迷你播放条与设置面板的"播放/暂停/上一句/下一句/关闭"按钮改用标准 Material 图标。
+- 状态栏适配：迷你播放条与设置面板自动避让状态栏与刘海屏。
+- 应用版本升级至 2.2.2alpha。
 
 ## 功能特性
 
@@ -85,7 +93,7 @@
 - 笔记颜色设置。
 - 真实翻页动画效果：滑动、覆盖等动画需要后续验证或自研实现。
 - PDF 专项深化：文字版 PDF 搜索、文字版 PDF 选区笔记、PDF 适应宽度/适应页面能力验证；需要 OCR 的扫描版 PDF 能力暂不实现。
-- TTS 后续仅做页内体验优化，不做通知栏媒体控制和后台服务。
+- TTS 后续优化方向：通知栏媒体控制（锁屏播放控件）、TTS 语速/音调实时预览、多语言语音支持。
 - 字体选择功能。
 - 多语言版本
 

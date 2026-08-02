@@ -28,6 +28,7 @@ import com.talebook.app.reader.ReadiumEngine
 import com.talebook.app.reader.ReadiumSessionStore
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.TtsController
+import com.talebook.app.reader.TtsPlaybackService
 import com.talebook.app.ui.theme.ThemePresets
 import com.talebook.app.util.TxtToEpubConverter
 import kotlinx.coroutines.Dispatchers
@@ -266,7 +267,7 @@ class LocalReaderViewModel : ViewModel() {
                                 letterSpacing = settingsRepository.readerLetterSpacing.first(),
                                 readerBackgroundColor = palette.background,
                                 readerTextColor = palette.text,
-                                customThemeEnabled = true
+                                customThemeEnabled = true,
                             )
                             val ttsSettings = ReaderTtsState(
                                 speechRate = settingsRepository.ttsSpeechRate.first(),
@@ -552,7 +553,7 @@ class LocalReaderViewModel : ViewModel() {
             letterSpacing = settingsRepository.readerLetterSpacing.first(),
             readerBackgroundColor = palette.background,
             readerTextColor = palette.text,
-            customThemeEnabled = true
+            customThemeEnabled = true,
         )
     }
 
@@ -873,7 +874,7 @@ private suspend fun openReadiumSession(
         readerBackgroundColor: Long = _uiState.value.readerSettings.readerBackgroundColor,
         readerTextColor: Long = _uiState.value.readerSettings.readerTextColor,
         customThemeEnabled: Boolean = _uiState.value.readerSettings.customThemeEnabled,
-        appDark: Boolean = _uiState.value.readerSettings.appDark
+        appDark: Boolean = _uiState.value.readerSettings.appDark,
     ) {
         val settings = ReaderDisplaySettings(
             fontFamily = fontFamily,
@@ -902,7 +903,7 @@ private suspend fun openReadiumSession(
             volumeKeyPageTurn = volumeKeyPageTurn,
             readerBackgroundColor = readerBackgroundColor and 0xFFFFFFFFL,
             readerTextColor = readerTextColor and 0xFFFFFFFFL,
-            customThemeEnabled = customThemeEnabled
+            customThemeEnabled = customThemeEnabled,
         )
         val previous = _uiState.value.readerSettings
         _uiState.update { it.copy(readerSettings = settings) }
@@ -1053,6 +1054,7 @@ private suspend fun openReadiumSession(
     fun startTts() {
         _uiState.update { it.copy(ttsState = it.ttsState.copy(isPanelVisible = true)) }
         if (_uiState.value.ttsState.isPlaying) return
+        appContext?.let { TtsPlaybackService.start(it) }
         startTtsPlayback()
     }
 
@@ -1080,6 +1082,7 @@ private suspend fun openReadiumSession(
     }
 
     fun exitTts() {
+        appContext?.let { TtsPlaybackService.stop(it) }
         ttsController?.shutdown()
         ttsController = null
         ttsQueue = emptyList()

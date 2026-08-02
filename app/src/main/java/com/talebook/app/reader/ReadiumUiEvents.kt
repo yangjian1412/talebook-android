@@ -129,7 +129,7 @@ data class ReaderDisplaySettings(
     val letterSpacing: Float = 0f,
     val readerBackgroundColor: Long = 0x00000000L,
     val readerTextColor: Long = 0x00000000L,
-    val customThemeEnabled: Boolean = false
+    val customThemeEnabled: Boolean = false,
 )
 
 enum class ReaderFontFamily {

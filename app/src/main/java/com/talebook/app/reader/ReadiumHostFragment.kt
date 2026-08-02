@@ -1,6 +1,8 @@
 package com.talebook.app.reader
 
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -520,14 +522,12 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
             }
         }
         if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
-            val overridePublisher = !settings.forcePublisherFonts
-            val readiumFontFamily = when {
-                !overridePublisher -> null
-                settings.fontFamily == ReaderFontFamily.DEFAULT -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
-                settings.fontFamily == ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
-                settings.fontFamily == ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
-                settings.fontFamily == ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
-                else -> null
+            val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !settings.forcePublisherFonts
+            val readiumFontFamily = when (settings.fontFamily) {
+                ReaderFontFamily.DEFAULT -> if (avoidLargePublisherFonts) org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF else null
+                ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
+                ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
+                ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
             }
             navigator.submitPreferences(
                 EpubPreferences(
@@ -540,20 +540,20 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     paragraphSpacing = settings.paragraphSpacing.toDouble(),
                     publisherStyles = settings.publisherStyles,
                     scroll = settings.scrollMode,
-                    textColor = readiumColorOrNull(settings.readerTextColor)
+                    textColor = readiumColorOrNull(settings.readerTextColor),
                 )
             )
-            injectCustomCss(navigator, settings, overridePublisher)
+            injectCustomCss(navigator, settings, avoidLargePublisherFonts)
         }
     }
 
-    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, overridePublisher: Boolean) {
+    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean) {
         val css = buildString {
-            if (overridePublisher) {
-                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; font-size: inherit !important; }")
+            append("html, body { margin: 0 !important; padding: 0 !important; }")
+            if (avoidLargePublisherFonts) {
+                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
             }
         }
-        if (css.isEmpty()) return
         val escaped = css.replace("'", "\\'").replace("\n", " ")
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
@@ -561,7 +561,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     "(function() { var old = document.getElementById('talebook-reader-custom-css'); if (old) old.remove(); var s = document.createElement('style'); s.id = 'talebook-reader-custom-css'; s.type = 'text/css'; s.innerHTML = '$escaped'; (document.head || document.documentElement).appendChild(s); })();"
                 )
             }.onFailure { error ->
-                android.util.Log.w("TaleReadium", "Custom CSS injection skipped: ${error.message}")
+                Log.w("TaleReadium", "Custom CSS injection skipped: ${error.message}")
             }
         }
     }

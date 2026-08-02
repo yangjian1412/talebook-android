@@ -43,12 +43,18 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,8 +62,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
@@ -76,6 +86,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -571,8 +582,174 @@ fun LocalReaderScreen(
                 onCloseTts = { viewModel.exitTts() },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = if (barsVisible) 72.dp else 16.dp, start = 12.dp, end = 12.dp)
+                    .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
+                    .padding(top = if (barsVisible) 72.dp else 12.dp, start = 12.dp, end = 12.dp)
             )
+        }
+        if (uiState.ttsState.isPanelVisible) {
+            var voicesExpanded by remember { mutableStateOf(false) }
+            Box(modifier = Modifier.align(Alignment.TopCenter)) {
+                AnimatedVisibility(
+                    visible = uiState.ttsState.isPanelVisible,
+                    enter = slideInVertically(initialOffsetY = { -it }),
+                    exit = slideOutVertically(targetOffsetY = { -it })
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        tonalElevation = 6.dp,
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "朗读",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                IconButton(
+                                    onClick = { viewModel.hideTtsPanel() },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "收起",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                            Text(
+                                text = uiState.ttsState.currentText.ifBlank { uiState.ttsState.status.ifBlank { "从当前位置开始朗读" } },
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 4
+                            )
+                            Text(
+                                text = when {
+                                    uiState.ttsState.isLoading -> "正在准备..."
+                                    uiState.ttsState.total > 0 -> "${uiState.ttsState.currentIndex}/${uiState.ttsState.total} · ${uiState.ttsState.status}"
+                                    else -> uiState.ttsState.status
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                Button(
+                                    onClick = {
+                                        if (uiState.ttsState.isPlaying) viewModel.pauseTts() else viewModel.resumeTts()
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !uiState.ttsState.isLoading,
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) { Text(if (uiState.ttsState.isPlaying) "暂停" else "开始") }
+                                OutlinedButton(
+                                    onClick = { viewModel.stopTts() },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) { Text("停止") }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedButton(
+                                    onClick = { viewModel.previousTtsSentence() },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) { Text("上一句") }
+                                OutlinedButton(
+                                    onClick = { viewModel.nextTtsSentence() },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) { Text("下一句") }
+                            }
+                            Text(
+                                text = "语速 ${String.format(java.util.Locale.US, "%.1f", uiState.ttsState.speechRate)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            CompactSlider(
+                                value = uiState.ttsState.speechRate,
+                                onValueChange = { viewModel.updateTtsRate(it) },
+                                valueRange = 0.5f..2.0f
+                            )
+                            Text(
+                                text = "音调 ${String.format(java.util.Locale.US, "%.1f", uiState.ttsState.pitch)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            CompactSlider(
+                                value = uiState.ttsState.pitch,
+                                onValueChange = { viewModel.updateTtsPitch(it) },
+                                valueRange = 0.5f..2.0f
+                            )
+                            Box {
+                                OutlinedButton(
+                                    onClick = { voicesExpanded = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Text(uiState.ttsState.voiceName.ifBlank { "系统默认语音" }, maxLines = 1)
+                                }
+                                DropdownMenu(expanded = voicesExpanded, onDismissRequest = { voicesExpanded = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("系统默认语音") },
+                                        onClick = {
+                                            viewModel.updateTtsVoice("")
+                                            voicesExpanded = false
+                                        }
+                                    )
+                                    uiState.ttsState.voices.forEach { voice ->
+                                        DropdownMenuItem(
+                                            text = { Text(voice, maxLines = 1) },
+                                            onClick = {
+                                                viewModel.updateTtsVoice(voice)
+                                                voicesExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "睡眠模式",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                CompactSwitch(
+                                    checked = uiState.ttsState.sleepEnabled,
+                                    onCheckedChange = { viewModel.updateTtsSleep(it) }
+                                )
+                            }
+                            if (uiState.ttsState.sleepEnabled) {
+                                Text(
+                                    text = "${uiState.ttsState.sleepMinutes} 分钟后自动停止",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                CompactSlider(
+                                    value = uiState.ttsState.sleepMinutes.toFloat(),
+                                    onValueChange = { viewModel.updateTtsSleep(true, it.toInt()) },
+                                    valueRange = 5f..180f
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -626,103 +803,7 @@ fun LocalReaderScreen(
         )
     }
 
-    if (uiState.ttsState.isPanelVisible) {
-        var voicesExpanded by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { viewModel.hideTtsPanel() },
-            title = { Text("朗读") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = uiState.ttsState.currentText.ifBlank { uiState.ttsState.status.ifBlank { "从当前位置开始朗读" } },
-                        maxLines = 4
-                    )
-                    Text(
-                        text = when {
-                            uiState.ttsState.isLoading -> "正在准备..."
-                            uiState.ttsState.total > 0 -> "${uiState.ttsState.currentIndex}/${uiState.ttsState.total} · ${uiState.ttsState.status}"
-                            else -> uiState.ttsState.status
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = {
-                                if (uiState.ttsState.isPlaying) viewModel.pauseTts() else viewModel.resumeTts()
-                            },
-                            modifier = Modifier.weight(1f),
-                            enabled = !uiState.ttsState.isLoading
-                        ) { Text(if (uiState.ttsState.isPlaying) "暂停" else "开始") }
-                        OutlinedButton(onClick = { viewModel.stopTts() }, modifier = Modifier.weight(1f)) { Text("停止") }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(onClick = { viewModel.previousTtsSentence() }, modifier = Modifier.weight(1f)) { Text("上一句") }
-                        OutlinedButton(onClick = { viewModel.nextTtsSentence() }, modifier = Modifier.weight(1f)) { Text("下一句") }
-                    }
-                    Text("语速 ${String.format(java.util.Locale.US, "%.1f", uiState.ttsState.speechRate)}")
-                    CompactSlider(
-                        value = uiState.ttsState.speechRate,
-                        onValueChange = { viewModel.updateTtsRate(it) },
-                        valueRange = 0.5f..2.0f
-                    )
-                    Text("音调 ${String.format(java.util.Locale.US, "%.1f", uiState.ttsState.pitch)}")
-                    CompactSlider(
-                        value = uiState.ttsState.pitch,
-                        onValueChange = { viewModel.updateTtsPitch(it) },
-                        valueRange = 0.5f..2.0f
-                    )
-                    Box {
-                        OutlinedButton(onClick = { voicesExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(uiState.ttsState.voiceName.ifBlank { "系统默认语音" }, maxLines = 1)
-                        }
-                        DropdownMenu(expanded = voicesExpanded, onDismissRequest = { voicesExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text("系统默认语音") },
-                                onClick = {
-                                    viewModel.updateTtsVoice("")
-                                    voicesExpanded = false
-                                }
-                            )
-                            uiState.ttsState.voices.forEach { voice ->
-                                DropdownMenuItem(
-                                    text = { Text(voice, maxLines = 1) },
-                                    onClick = {
-                                        viewModel.updateTtsVoice(voice)
-                                        voicesExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("睡眠模式")
-                        CompactSwitch(
-                            checked = uiState.ttsState.sleepEnabled,
-                            onCheckedChange = { viewModel.updateTtsSleep(it) }
-                        )
-                    }
-                    if (uiState.ttsState.sleepEnabled) {
-                        Text("${uiState.ttsState.sleepMinutes} 分钟后自动停止")
-                        CompactSlider(
-                            value = uiState.ttsState.sleepMinutes.toFloat(),
-                            onValueChange = { viewModel.updateTtsSleep(true, it.toInt()) },
-                            valueRange = 5f..180f
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.hideTtsPanel() }) { Text("收起") }
-            }
-        )
-    }
-
-    if (showProgressJumpDialog) {
+if (showProgressJumpDialog) {
         AlertDialog(
             onDismissRequest = { showProgressJumpDialog = false },
             title = { Text("跳转进度") },
@@ -1554,10 +1635,10 @@ private fun FloatingTtsBar(
                 Text(text.ifBlank { status.ifBlank { "朗读中" } }, maxLines = 1, style = MaterialTheme.typography.bodySmall)
                 Text(status, maxLines = 1, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = onPrevious) { Text("上") }
-            TextButton(onClick = onToggle) { Text(if (isPlaying) "暂停" else "继续") }
-            TextButton(onClick = onNext) { Text("下") }
-            TextButton(onClick = onCloseTts) { Text("关闭") }
+            IconButton(onClick = onPrevious) { Icon(Icons.Filled.SkipPrevious, contentDescription = "上一句") }
+            IconButton(onClick = onToggle) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "暂停" else "继续") }
+            IconButton(onClick = onNext) { Icon(Icons.Filled.SkipNext, contentDescription = "下一句") }
+            IconButton(onClick = onCloseTts) { Icon(Icons.Default.Close, contentDescription = "关闭朗读") }
         }
     }
 }

@@ -13,8 +13,8 @@ android {
         applicationId = "com.talebook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "2.2.1b"
+        versionCode = 6
+        versionName = "2.2.2alpha"
     }
 
     signingConfigs {
@@ -27,6 +27,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             signingConfig = signingConfigs["release"]
             isMinifyEnabled = false
@@ -74,6 +77,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.coil.compose)
+    implementation(libs.reorderable)
     implementation(libs.datastore.preferences)
     implementation(libs.gson)
     implementation(libs.androidx.fragment.ktx)
