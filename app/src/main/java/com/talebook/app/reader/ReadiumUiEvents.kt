@@ -10,6 +10,7 @@ object ReadiumUiEvents {
     private val _bookmarkAdded = MutableSharedFlow<Long>(extraBufferCapacity = 8)
     private val _annotationAdded = MutableSharedFlow<Long>(extraBufferCapacity = 8)
     private val _annotationChanged = MutableSharedFlow<Long>(extraBufferCapacity = 8)
+    private val _ttsHighlights = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 8)
     private val _goToLocators = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 8)
     private val _goToLinks = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 8)
     private val _goToProgress = MutableSharedFlow<Pair<Long, Double>>(extraBufferCapacity = 8)
@@ -26,6 +27,7 @@ object ReadiumUiEvents {
     val bookmarkAdded = _bookmarkAdded.asSharedFlow()
     val annotationAdded = _annotationAdded.asSharedFlow()
     val annotationChanged = _annotationChanged.asSharedFlow()
+    val ttsHighlights = _ttsHighlights.asSharedFlow()
     val goToLocators = _goToLocators.asSharedFlow()
     val goToLinks = _goToLinks.asSharedFlow()
     val goToProgress = _goToProgress.asSharedFlow()
@@ -63,6 +65,10 @@ object ReadiumUiEvents {
 
     fun emitGoToLocator(sessionId: Long, locatorJson: String) {
         _goToLocators.tryEmit(sessionId to locatorJson)
+    }
+
+    fun emitTtsHighlight(sessionId: Long, locatorJson: String) {
+        _ttsHighlights.tryEmit(sessionId to locatorJson)
     }
 
     fun emitGoToLink(sessionId: Long, href: String) {

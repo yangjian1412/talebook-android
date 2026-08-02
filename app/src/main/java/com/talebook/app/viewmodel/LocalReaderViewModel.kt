@@ -1075,9 +1075,22 @@ private suspend fun openReadiumSession(
         }
     }
 
+    private fun focusLossPause() {
+        if (_uiState.value.ttsState.isPlaying) {
+            pauseTts()
+        }
+    }
+
+    private fun focusGainResume() {
+        if (_uiState.value.ttsState.isPaused && _uiState.value.ttsState.isPanelVisible) {
+            resumeTts()
+        }
+    }
+
     fun stopTts() {
         ttsController?.stop()
         sleepStopAtMillis = 0L
+        _uiState.value.sessionId?.let { ReadiumUiEvents.emitTtsHighlight(it, "") }
         _uiState.update { it.copy(ttsState = it.ttsState.copy(isPlaying = false, isPaused = false, status = "已停止")) }
     }
 
@@ -1089,6 +1102,7 @@ private suspend fun openReadiumSession(
         ttsIndex = 0
         ttsGeneration++
         sleepStopAtMillis = 0L
+        _uiState.value.sessionId?.let { ReadiumUiEvents.emitTtsHighlight(it, "") }
         _uiState.update { it.copy(ttsState = it.ttsState.copy(isPanelVisible = false, isPlaying = false, isPaused = false, currentText = "", status = "", currentIndex = 0, total = 0)) }
     }
 
@@ -1177,7 +1191,9 @@ private suspend fun openReadiumSession(
                 },
                 onStart = { utteranceId -> onTtsStart(utteranceId) },
                 onDone = { utteranceId -> onTtsDone(utteranceId) },
-                onError = { message -> onTtsError(message) }
+                onError = { message -> onTtsError(message) },
+                onFocusLoss = { focusLossPause() },
+                onFocusGain = { focusGainResume() }
             )
             ttsController = controller
             if (_uiState.value.ttsState.sleepEnabled) {
@@ -1191,7 +1207,10 @@ private suspend fun openReadiumSession(
             stopTts()
             return
         }
-        _uiState.value.sessionId?.let { ReadiumUiEvents.emitGoToLocator(it, utterance.locatorJson) }
+        _uiState.value.sessionId?.let { sessionId ->
+            ReadiumUiEvents.emitGoToLocator(sessionId, utterance.locatorJson)
+            ReadiumUiEvents.emitTtsHighlight(sessionId, utterance.locatorJson)
+        }
         val state = _uiState.value.ttsState
         val ok = ttsController?.speak(utterance.text, utterance.id, state.speechRate, state.pitch, state.voiceName) == true
         if (!ok) {

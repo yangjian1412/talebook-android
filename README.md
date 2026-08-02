@@ -1,10 +1,17 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.2alpha`
+> 当前版本：`2.2.2beta`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.2.2beta 更新日志
+
+- 朗读段落高亮：正在朗读的句子所在段落以浅蓝高亮显示，跟随朗读自动翻页。
+- 音频焦点处理：朗读时来电或其他应用播放音频会自动暂停，结束后自动恢复。
+- 朗读面板新增电池优化提示与"电池优化设置"按钮，解决部分机型后台无法播放的问题。
+- 应用版本升级至 2.2.2beta。
 
 ### 2.2.2alpha 更新日志
 

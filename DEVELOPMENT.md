@@ -411,7 +411,7 @@ Compose 和 Readium Fragment 之间通过轻量事件总线通信。当前事件
 - `readerSettings`：阅读显示设置变更，Fragment 应用到 Readium Navigator。
 - `annotationChanged`：笔记编辑/删除后通知 Fragment 刷新正文高亮。
 
-TTS 当前不走 `ReadiumUiEvents` 新事件。`LocalReaderViewModel` 从 `ReadiumSessionStore` 取 `Publication.content()` 构建朗读队列，并用已有 `emitGoToLocator()` 在每句开始时跟随定位。
+TTS 使用 `ReadiumUiEvents` 事件与阅读器通信：`LocalReaderViewModel` 从 `ReadiumSessionStore` 取 `Publication.content()` 构建朗读队列，每句开始时用 `emitGoToLocator()` 跟随定位，并用 `emitTtsHighlight()` 高亮当前段落。
 
 如果要新增 Compose 控制 Readium 的能力，优先在这里加事件，避免把 Fragment 实例直接暴露给 Compose。
 
@@ -487,18 +487,21 @@ PDF 当前支持打开、进度保存、书签、当前位置笔记、反 L 点�
 - `ui/screens/LocalReaderScreen.kt`
 - `data/repository/SettingsRepository.kt`
 
-当前 TTS 第一期能力：
+当前 TTS 能力：
 
 - 使用 Android 系统 `TextToSpeech`。
 - 从 Readium `Publication.content().elements()` 提取文字。
 - 按标点和长度切成句子队列。
 - 默认从当前阅读进度附近开始朗读。
 - 每句开始时通过 `ReadiumUiEvents.emitGoToLocator()` 跳到该句所属 Locator，实现自动跟随/翻页。
+- 每句开始时通过 `ReadiumUiEvents.emitTtsHighlight()` 通知阅读器以浅蓝 `Decoration.Style.Highlight` 高亮当前段落（独立装饰组 `"talebook-tts"`，与批注组 `"talebook-annotations"` 互不冲突）。
 - 支持开始、暂停、继续、停止、上一句、下一句。
 - 支持语速、音调、系统语音选择。
 - 支持睡眠模式，默认开启 30 分钟自动停止。
 - 朗读或暂停时显示阅读页浮动控制栏；完整控制仍在 TTS 面板。
 - 熄屏后不主动停止朗读。
+- 音频焦点：`TtsController` 在朗读前申请 `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`；临时丢失焦点自动暂停、恢复焦点自动继续（回调 `onFocusLoss`/`onFocusGain` 接入 ViewModel）。
+- TTS 面板内置电池优化提示与"电池优化设置"入口（`ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS`），应对部分机型后台播放被杀问题。
 
 TTS 持久化设置：
 
@@ -634,7 +637,6 @@ Room 表：
 明确不做：
 
 - TTS 通知栏媒体控制。
-- TTS 后台 Foreground Service。
 - 缓存进度显示。
 - 缓存失败原因细化。
 - 导入前预览。

@@ -111,6 +111,8 @@ import com.talebook.app.ui.theme.toColor
 import com.talebook.app.viewmodel.LocalReaderViewModel
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.provider.Settings
 import android.view.View
 import android.view.WindowInsets as AndroidWindowInsets
 import android.widget.FrameLayout
@@ -745,6 +747,27 @@ fun LocalReaderScreen(
                                     onValueChange = { viewModel.updateTtsSleep(true, it.toInt()) },
                                     valueRange = 5f..180f
                                 )
+                            }
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+                            Text(
+                                text = "无法后台播放时，请将本应用电池策略设为「不限制」",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            val batteryContext = LocalContext.current
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        batteryContext.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Text("电池优化设置")
                             }
                         }
                     }

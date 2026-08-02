@@ -182,6 +182,13 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
                         }
                     }
                     .launchIn(this)
+                ReadiumUiEvents.ttsHighlights
+                    .onEach { (targetSessionId, locatorJson) ->
+                        if (targetSessionId == sessionId) {
+                            applyTtsHighlight(navigator, locatorJson)
+                        }
+                    }
+                    .launchIn(this)
                 ReadiumUiEvents.goToLinks
                     .onEach { (targetSessionId, href) ->
                         if (targetSessionId == sessionId) {
@@ -492,6 +499,19 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 }
         }
         decorable.applyDecorations(decorations, "talebook-annotations")
+    }
+
+    private suspend fun applyTtsHighlight(navigator: Navigator, locatorJson: String) {
+        val decorable = navigator as? DecorableNavigator ?: return
+        if (locatorJson.isBlank()) {
+            decorable.applyDecorations(emptyList(), "talebook-tts")
+            return
+        }
+        val locator = runCatching { Locator.fromJSON(JSONObject(locatorJson)) }.getOrNull() ?: return
+        decorable.applyDecorations(
+            listOf(Decoration(id = "tts-current", locator = locator, style = Decoration.Style.Highlight(0x66BBDDFF, false))),
+            "talebook-tts"
+        )
     }
 
     private suspend fun activeServerId(): String = SettingsRepository(requireContext().applicationContext).activeLibraryServerId.first()
