@@ -82,6 +82,8 @@ class SettingsRepository(private val context: Context) {
         private val READER_FORCE_PUBLISHER_FONTS_KEY = booleanPreferencesKey("reader_force_publisher_fonts")
         private val READER_KEEP_SCREEN_ON_KEY = booleanPreferencesKey("reader_keep_screen_on")
         private val READER_HIDE_STATUS_BAR_KEY = booleanPreferencesKey("reader_hide_status_bar_in_reader")
+        private val READER_HIDE_TIME_KEY = booleanPreferencesKey("reader_hide_time_in_reader")
+        private val READER_HIDE_CHAPTER_PATH_KEY = booleanPreferencesKey("reader_hide_chapter_path_in_reader")
         private val READER_AUTO_REFRESH_HOME_ON_ENTER_KEY = booleanPreferencesKey("reader_auto_refresh_home_on_enter")
         private val READER_PAGE_MARGIN_SEPARATE_MODE_KEY = booleanPreferencesKey("reader_page_margin_separate_mode")
         private val SHOW_TAB_LABEL_KEY = booleanPreferencesKey("show_tab_label")
@@ -304,6 +306,14 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val readerHideStatusBarInReader: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_HIDE_STATUS_BAR_KEY] ?: false
+    }
+
+    val readerHideTimeInReader: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[READER_HIDE_TIME_KEY] ?: false
+    }
+
+    val readerHideChapterPathInReader: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[READER_HIDE_CHAPTER_PATH_KEY] ?: false
     }
 
     val readerAutoRefreshHomeOnEnter: Flow<Boolean> = context.dataStore.data.map { prefs ->
@@ -601,6 +611,18 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         }
     }
 
+    suspend fun saveReaderHideTimeInReader(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_HIDE_TIME_KEY] = enabled
+        }
+    }
+
+    suspend fun saveReaderHideChapterPathInReader(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_HIDE_CHAPTER_PATH_KEY] = enabled
+        }
+    }
+
     suspend fun saveReaderAutoRefreshHomeOnEnter(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[READER_AUTO_REFRESH_HOME_ON_ENTER_KEY] = enabled
@@ -668,16 +690,16 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         volumeKeyPageTurn: Boolean,
         forceTapAnimation: Boolean
     ) {
-        val horizontal = pageMarginHorizontal.coerceIn(0.5f, 2.0f)
-        val vertical = pageMarginVertical.coerceIn(0.5f, 2.0f)
+        val horizontal = pageMarginHorizontal.coerceIn(0.5f, 3.0f)
+        val vertical = pageMarginVertical.coerceIn(0.5f, 3.0f)
         context.dataStore.edit { prefs ->
-            prefs[READER_FONT_SCALE_KEY] = fontScale.coerceIn(0.7f, 1.8f)
+            prefs[READER_FONT_SCALE_KEY] = fontScale.coerceIn(0.5f, 3.0f)
             prefs[READER_FONT_FAMILY_KEY] = when (fontFamily) {
                 "default", "serif", "sans_serif", "monospace" -> fontFamily
                 else -> "default"
             }
-            prefs[READER_LINE_HEIGHT_KEY] = lineHeight.coerceIn(1.0f, 2.4f)
-            prefs[READER_BRIGHTNESS_KEY] = brightness.coerceIn(0.3f, 1.0f)
+            prefs[READER_LINE_HEIGHT_KEY] = lineHeight.coerceIn(0.5f, 3.0f)
+            prefs[READER_BRIGHTNESS_KEY] = brightness.coerceIn(0.0f, 1.0f)
             prefs[READER_SCROLL_MODE_KEY] = scrollMode
             prefs[READER_SYSTEM_BRIGHTNESS_KEY] = useSystemBrightness
             prefs[READER_THEME_KEY] = when (theme) {
@@ -689,12 +711,12 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
                 "inverted_l", "left_right", "right_only", "disabled" -> pageTurnMode
                 else -> "inverted_l"
             }
-            prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0.5f, 2.0f)
+            prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0.5f, 3.0f)
             prefs[READER_PAGE_MARGIN_HORIZONTAL_KEY] = horizontal
             prefs[READER_PAGE_MARGIN_VERTICAL_KEY] = vertical
             prefs[READER_PAGE_MARGIN_SEPARATE_MODE_KEY] = pageMarginSeparateMode
-            prefs[READER_PARAGRAPH_SPACING_KEY] = paragraphSpacing.coerceIn(0.0f, 2.0f)
-            prefs[READER_LETTER_SPACING_KEY] = letterSpacing.coerceIn(0f, 6f)
+            prefs[READER_PARAGRAPH_SPACING_KEY] = paragraphSpacing.coerceIn(0.0f, 4.0f)
+            prefs[READER_LETTER_SPACING_KEY] = letterSpacing.coerceIn(0f, 10f)
             prefs[READER_PUBLISHER_STYLES_KEY] = publisherStyles
             prefs[READER_FORCE_PUBLISHER_FONTS_KEY] = forcePublisherFonts
             prefs[READER_KEEP_SCREEN_ON_KEY] = keepScreenOn

@@ -93,6 +93,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
@@ -140,6 +142,8 @@ fun LocalReaderScreen(
     val customBackground by settingsRepository.dayCustomBackground.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.background)
     val customText by settingsRepository.dayCustomText.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text)
     val hideStatusBarInReader by settingsRepository.readerHideStatusBarInReader.collectAsState(initial = false)
+    val hideTimeInReader by settingsRepository.readerHideTimeInReader.collectAsState(initial = false)
+    val hideChapterPathInReader by settingsRepository.readerHideChapterPathInReader.collectAsState(initial = false)
     val hideToolbarLabels by settingsRepository.readerHideToolbarLabels.collectAsState(initial = true)
     val pageMarginSeparateMode by settingsRepository.readerPageMarginSeparateMode.collectAsState(initial = false)
     val systemDark = isSystemInDarkTheme()
@@ -308,6 +312,13 @@ fun LocalReaderScreen(
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
         ReadiumUiEvents.progress.collect { (targetSessionId, value) ->
             if (targetSessionId == sessionId) progression = value
+        }
+    }
+
+    LaunchedEffect(uiState.sessionId) {
+        val sessionId = uiState.sessionId ?: return@LaunchedEffect
+        ReadiumUiEvents.currentChapterPath.collect { (targetSessionId, path) ->
+            if (targetSessionId == sessionId) viewModel.updateCurrentChapterPath(path)
         }
     }
 
@@ -493,7 +504,7 @@ fun LocalReaderScreen(
                 ReaderBottomBar(
                     progression = progression,
                     darkMode = effectiveDark,
-                    showTime = hideStatusBarInReader,
+                    showTime = !hideTimeInReader,
                     showLabels = !hideToolbarLabels,
                     contentColor = currentReaderText,
                     onToc = { showTocDialog = true },
@@ -514,6 +525,7 @@ fun LocalReaderScreen(
                         pageJumpText = ""
                         showProgressJumpDialog = true
                     },
+                    chapterPath = if (hideChapterPathInReader) "" else uiState.currentChapterPath,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
@@ -522,13 +534,14 @@ fun LocalReaderScreen(
             if (!barsVisible && uiState.sessionId != null) {
                 ReaderProgressOverlay(
                     progression = progression,
-                    showTime = hideStatusBarInReader,
+                    showTime = !hideTimeInReader,
                     contentColor = currentReaderText,
                     onClick = {
                         progressJumpText = ((progression * 100).toInt()).toString()
                         pageJumpText = ""
                         showProgressJumpDialog = true
                     },
+                    chapterPath = if (hideChapterPathInReader) "" else uiState.currentChapterPath,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
@@ -926,7 +939,7 @@ if (showProgressJumpDialog) {
                                 tapPageTurn = readerSettings.tapPageTurn
                             )
                         },
-                        valueRange = 0.7f..1.8f
+                        valueRange = 0.5f..3.0f
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -945,7 +958,7 @@ if (showProgressJumpDialog) {
                         onValueChange = {
                             viewModel.updateReaderSettings(readerSettings.fontScale, it, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn)
                         },
-                        valueRange = 1.0f..2.4f
+                        valueRange = 0.5f..3.0f
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -992,7 +1005,7 @@ if (showProgressJumpDialog) {
                             onValueChange = {
                                 viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageMargins = it, pageMarginHorizontal = it, pageMarginVertical = it)
                             },
-                            valueRange = 0.5f..2.0f
+                            valueRange = 0.5f..3.0f
                         )
                     }
                     Row(
@@ -1015,7 +1028,7 @@ if (showProgressJumpDialog) {
                             onValueChange = {
                                 viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = it, scrollMode = readerSettings.scrollMode, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn)
                             },
-                            valueRange = 0.3f..1.0f
+                            valueRange = 0.0f..1.0f
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1111,12 +1124,12 @@ if (showProgressJumpDialog) {
                         Text("左右 ${String.format(java.util.Locale.US, "%.2f", localH)}")
                         TextButton(onClick = { localH = 1.0f }) { Text("默认") }
                     }
-                    CompactSlider(value = localH, onValueChange = { localH = it }, valueRange = 0.5f..2.0f)
+                    CompactSlider(value = localH, onValueChange = { localH = it }, valueRange = 0.5f..3.0f)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("上下 ${String.format(java.util.Locale.US, "%.2f", localV)}")
                         TextButton(onClick = { localV = 1.0f }) { Text("默认") }
                     }
-                    CompactSlider(value = localV, onValueChange = { localV = it }, valueRange = 0.5f..2.0f)
+                    CompactSlider(value = localV, onValueChange = { localV = it }, valueRange = 0.5f..3.0f)
                 }
             },
             confirmButton = {
@@ -1254,7 +1267,7 @@ if (showProgressJumpDialog) {
                         onValueChange = {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, letterSpacing = it)
                         },
-                        valueRange = 0f..6f
+                        valueRange = 0f..10f
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1273,7 +1286,7 @@ if (showProgressJumpDialog) {
                         onValueChange = {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, paragraphSpacing = it)
                         },
-                        valueRange = 0.0f..2.0f
+                        valueRange = 0.0f..4.0f
                     )
                     var showVolumeKeyInfo by remember { mutableStateOf(false) }
                     Row(
@@ -1352,6 +1365,28 @@ if (showProgressJumpDialog) {
                         CompactSwitch(
                             checked = hideStatusBarInReader,
                             onCheckedChange = { scope.launch { settingsRepository.saveReaderHideStatusBarInReader(it) } }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("阅读时隐藏时间")
+                        CompactSwitch(
+                            checked = hideTimeInReader,
+                            onCheckedChange = { scope.launch { settingsRepository.saveReaderHideTimeInReader(it) } }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("阅读时隐藏书名和章节")
+                        CompactSwitch(
+                            checked = hideChapterPathInReader,
+                            onCheckedChange = { scope.launch { settingsRepository.saveReaderHideChapterPathInReader(it) } }
                         )
                     }
                     Row(
@@ -1679,6 +1714,7 @@ private fun ReaderBottomBar(
     onNote: () -> Unit,
     onTts: () -> Unit,
     onProgressClick: () -> Unit,
+    chapterPath: String = "",
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -1691,7 +1727,8 @@ private fun ReaderBottomBar(
             progression = progression,
             showTime = showTime,
             contentColor = contentColor,
-            onClick = onProgressClick
+            onClick = onProgressClick,
+            chapterPath = chapterPath
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1805,7 +1842,8 @@ private fun ReaderProgressOverlay(
     showTime: Boolean,
     contentColor: Color = MaterialTheme.colorScheme.onSurface,
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    chapterPath: String = ""
 ) {
     val safeProgress = progression.toFloat().coerceIn(0f, 1f)
     var nowText by remember { mutableStateOf(formatNow()) }
@@ -1836,21 +1874,33 @@ private fun ReaderProgressOverlay(
                     .background(contentColor)
             )
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            if (showTime) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = chapterPath,
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 56.dp)
+            )
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (showTime) {
+                    Text(
+                        text = nowText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = contentColor.copy(alpha = 0.7f)
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
                 Text(
-                    text = nowText,
+                    text = "${(safeProgress * 100).toInt()}%",
                     style = MaterialTheme.typography.labelSmall,
                     color = contentColor.copy(alpha = 0.7f)
                 )
-            } else {
-                Spacer(Modifier)
             }
-            Text(
-                text = "${(safeProgress * 100).toInt()}%",
-                style = MaterialTheme.typography.labelSmall,
-                color = contentColor.copy(alpha = 0.7f)
-            )
         }
     }
 }

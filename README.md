@@ -1,10 +1,18 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.2beta`
+> 当前版本：`2.2.2beta2`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.2.2beta2 更新日志
+
+- 移除应用内置的默认服务器地址：首次启动必须手动配置服务器 URL，不再自动填充任何默认地址。
+- 阅读时显示当前书名与章节标题：在底部进度条下方居中显示"书名 > 章节名"，各最多 12 字后省略号截断。
+- 高级设置拆分为独立开关：阅读时隐藏状态栏 / 隐藏时间 / 隐藏书名和章节 三个独立开关，默认都显示。
+- 字号范围 50%~300%、行距 0.5~3、页边距 0.5~3、亮度 0~100%、字间距 0~10、段间距 0~4。
+- 应用版本升级至 2.2.2beta2。
 
 ### 2.2.2beta 更新日志
 

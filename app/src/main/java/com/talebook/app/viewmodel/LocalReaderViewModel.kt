@@ -72,6 +72,7 @@ data class LocalReaderUiState(
     val statusMessage: String = "",
     val error: String? = null,
     val tableOfContents: List<ReaderTocItem> = emptyList(),
+    val currentChapterPath: String = "",
     val bookmarks: List<ReaderBookmarkEntity> = emptyList(),
     val annotations: List<ReaderAnnotationEntity> = emptyList(),
     val searchResults: List<ReaderSearchResult> = emptyList(),
@@ -878,21 +879,21 @@ private suspend fun openReadiumSession(
     ) {
         val settings = ReaderDisplaySettings(
             fontFamily = fontFamily,
-            fontScale = fontScale.coerceIn(0.7f, 1.8f),
-            lineHeight = lineHeight.coerceIn(1.0f, 2.4f),
-            brightness = brightness.coerceIn(0.3f, 1.0f),
+            fontScale = fontScale.coerceIn(0.5f, 3.0f),
+            lineHeight = lineHeight.coerceIn(0.5f, 3.0f),
+            brightness = brightness.coerceIn(0.0f, 1.0f),
             scrollMode = scrollMode,
             useSystemBrightness = useSystemBrightness,
             theme = theme,
             tapPageTurn = tapPageTurn,
             appDark = appDark,
             pageTurnMode = pageTurnMode,
-            pageMargins = pageMargins.coerceIn(0.5f, 2.0f),
+            pageMargins = pageMargins.coerceIn(0.5f, 3.0f),
             pageMarginHorizontal = pageMarginHorizontal.coerceIn(0.5f, 2.0f),
             pageMarginVertical = pageMarginVertical.coerceIn(0.5f, 2.0f),
             pageMarginSeparateMode = pageMarginSeparateMode,
-            paragraphSpacing = paragraphSpacing.coerceIn(0.0f, 2.0f),
-            letterSpacing = letterSpacing.coerceIn(0f, 6f),
+            paragraphSpacing = paragraphSpacing.coerceIn(0.0f, 4.0f),
+            letterSpacing = letterSpacing.coerceIn(0f, 10f),
             publisherStyles = publisherStyles,
             forcePublisherFonts = forcePublisherFonts,
             keepScreenOn = keepScreenOn,
@@ -1060,6 +1061,10 @@ private suspend fun openReadiumSession(
 
     fun hideTtsPanel() {
         _uiState.update { it.copy(ttsState = it.ttsState.copy(isPanelVisible = false)) }
+    }
+
+    fun updateCurrentChapterPath(path: String) {
+        _uiState.update { it.copy(currentChapterPath = path) }
     }
 
     fun pauseTts() {

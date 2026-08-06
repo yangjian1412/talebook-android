@@ -161,7 +161,13 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                 navigator.currentLocator
-                    .onEach { locator -> saveProgress(session.bookId, locator) }
+                    .onEach { locator ->
+                        saveProgress(session.bookId, locator)
+                        val toc = session.publication.tableOfContents
+                        val bookTitle = session.publication.metadata.title ?: ""
+                        val path = buildChapterPath(locator.href.toString(), toc, bookTitle)
+                        ReadiumUiEvents.emitCurrentChapterPath(sessionId, path)
+                    }
                     .launchIn(this)
                 ReadiumUiEvents.addBookmarks
                     .onEach { targetSessionId ->
@@ -525,6 +531,30 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         return null
     }
 
+    private fun buildChapterPath(href: String, toc: List<Link>, bookTitle: String): String {
+        val cleanHref = href.substringBefore("#").trimEnd('/')
+        val target = findTocItem(toc, cleanHref)
+        val chapterTitle = target?.title?.takeIf { it.isNotBlank() } ?: ""
+        val truncatedBook = truncate(bookTitle, 12)
+        val truncatedChapter = truncate(chapterTitle, 12)
+        return if (truncatedChapter.isBlank()) truncatedBook else "$truncatedBook > $truncatedChapter"
+    }
+
+    private fun findTocItem(toc: List<Link>, href: String): Link? {
+        for (link in toc) {
+            val linkHref = link.href.toString().substringBefore("#").trimEnd('/')
+            if (linkHref == href || linkHref.endsWith(href) || href.endsWith(linkHref)) return link
+            val child = findTocItem(link.children, href)
+            if (child != null) return child
+        }
+        return null
+    }
+
+    private fun truncate(text: String, max: Int): String {
+        if (text.length <= max) return text
+        return text.take(max) + "..."
+    }
+
     private fun applyReaderSettings(session: ReadiumSession, navigator: Navigator, settings: ReaderDisplaySettings) {
         val activeBg = resolveActiveBackground(settings.readerBackgroundColor, settings.appDark)
         val color = rgbToColor(activeBg)
@@ -533,7 +563,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         val window = activity?.window
         if (window != null) {
             window.attributes = window.attributes.apply {
-                screenBrightness = if (settings.useSystemBrightness) -1f else settings.brightness.coerceIn(0.3f, 1.0f)
+                screenBrightness = if (settings.useSystemBrightness) -1f else settings.brightness.coerceIn(0.0f, 1.0f)
             }
             if (settings.keepScreenOn) {
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

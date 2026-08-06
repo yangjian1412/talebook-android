@@ -21,6 +21,7 @@ object ReadiumUiEvents {
     private val _readerInteractions = MutableSharedFlow<Long>(extraBufferCapacity = 16)
     private val _goForwardKey = MutableSharedFlow<Long>(extraBufferCapacity = 8)
     private val _goBackwardKey = MutableSharedFlow<Long>(extraBufferCapacity = 8)
+    private val _currentChapterPath = MutableSharedFlow<Pair<Long, String>>(extraBufferCapacity = 8)
     val centerTaps = _centerTaps.asSharedFlow()
     val addBookmarks = _addBookmarks.asSharedFlow()
     val addNotes = _addNotes.asSharedFlow()
@@ -38,6 +39,7 @@ object ReadiumUiEvents {
     val readerInteractions = _readerInteractions.asSharedFlow()
     val goForwardKey = _goForwardKey.asSharedFlow()
     val goBackwardKey = _goBackwardKey.asSharedFlow()
+    val currentChapterPath = _currentChapterPath.asSharedFlow()
 
     fun emitCenterTap(sessionId: Long, locatorJson: String) {
         _centerTaps.tryEmit(sessionId to locatorJson)
@@ -105,6 +107,10 @@ object ReadiumUiEvents {
 
     fun emitGoBackwardKey(sessionId: Long) {
         _goBackwardKey.tryEmit(sessionId)
+    }
+
+    fun emitCurrentChapterPath(sessionId: Long, path: String) {
+        _currentChapterPath.tryEmit(sessionId to path)
     }
 }
 
