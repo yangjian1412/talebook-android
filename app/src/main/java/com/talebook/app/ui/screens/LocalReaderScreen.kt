@@ -430,8 +430,8 @@ fun LocalReaderScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(
-                                        top = if (readerSettings.scrollMode) 8.dp else readerSafeTopPadding + 16.dp,
-                                        bottom = 56.dp
+                                        top = if (readerSettings.scrollMode) 32.dp else readerSafeTopPadding + 24.dp,
+                                        bottom = 48.dp
                                     )
                                     .background(currentReaderBackground),
                                 factory = { ctx ->
@@ -584,8 +584,22 @@ fun LocalReaderScreen(
                     )
                 }
             }
-        }
-        if (uiState.ttsState.isPlaying || uiState.ttsState.isPaused) {
+}
+            if (uiState.sessionId != null && !hideChapterPathInReader) {
+                val bookTitle = uiState.title.ifBlank { "本地阅读器" }
+                Text(
+                    text = if (bookTitle.length > 20) bookTitle.take(20) + "..." else bookTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = currentReaderText.copy(alpha = 0.7f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
+                        .padding(top = 4.dp, start = 16.dp, end = 16.dp)
+                )
+            }
+            if (uiState.ttsState.isPlaying || uiState.ttsState.isPaused) {
             FloatingTtsBar(
                 text = uiState.ttsState.currentText,
                 status = uiState.ttsState.status,

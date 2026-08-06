@@ -51,6 +51,7 @@ import org.readium.r2.shared.util.data.ReadError
 class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavigatorFragment.Listener {
     private val sessionId: Long by lazy { requireArguments().getLong(ARG_SESSION_ID) }
     private val containerId: Int by lazy { View.generateViewId() }
+    private var lastChapterName: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -165,8 +166,9 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
                         saveProgress(session.bookId, locator)
                         val toc = session.publication.tableOfContents
                         val bookTitle = session.publication.metadata.title ?: ""
-                        val path = buildChapterPath(locator.href.toString(), toc, bookTitle)
-                        ReadiumUiEvents.emitCurrentChapterPath(sessionId, path)
+                        val chapter = buildChapterPath(locator.href.toString(), toc, bookTitle)
+                        if (chapter.isNotBlank()) lastChapterName = chapter
+                        ReadiumUiEvents.emitCurrentChapterPath(sessionId, chapter.ifBlank { lastChapterName })
                     }
                     .launchIn(this)
                 ReadiumUiEvents.addBookmarks
@@ -535,9 +537,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         val cleanHref = href.substringBefore("#").trimEnd('/')
         val target = findTocItem(toc, cleanHref)
         val chapterTitle = target?.title?.takeIf { it.isNotBlank() } ?: ""
-        val truncatedBook = truncate(bookTitle, 12)
-        val truncatedChapter = truncate(chapterTitle, 12)
-        return if (truncatedChapter.isBlank()) truncatedBook else "$truncatedBook > $truncatedChapter"
+        return truncate(chapterTitle, 20)
     }
 
     private fun findTocItem(toc: List<Link>, href: String): Link? {
