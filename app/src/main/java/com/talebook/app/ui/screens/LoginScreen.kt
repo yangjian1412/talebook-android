@@ -35,6 +35,7 @@ import android.graphics.BitmapFactory
 import android.util.Base64
 import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.data.server.ServerType
 import com.talebook.app.ui.components.CaptchaImageView
 import com.talebook.app.ui.components.UnlockSiteDialog
 import com.talebook.app.viewmodel.CaptchaUiState
@@ -65,10 +66,14 @@ fun LoginScreen(
     val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "")
     val serverName by settingsRepository.serverName.collectAsState(initial = "")
     val serverPrivateMode by settingsRepository.serverPrivateMode.collectAsState(initial = false)
+    val serverTypeStr by settingsRepository.activeServerType.collectAsState(initial = "talebook")
     var showServerConfig by remember { mutableStateOf(false) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var editName by remember(serverName) { mutableStateOf(serverName) }
     var editPrivateMode by remember(serverPrivateMode) { mutableStateOf(serverPrivateMode) }
+    var editServerType by remember(serverTypeStr) { mutableStateOf(serverTypeStr) }
+    var editBasicUser by remember { mutableStateOf("") }
+    var editBasicPass by remember { mutableStateOf("") }
     var urlSavedHint by remember { mutableStateOf(false) }
     var showServerCaptchaDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -195,23 +200,70 @@ fun LoginScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "服务端类型",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("是否启用私人模式", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "服务端开启了 INVITE_MODE 时需要先输入站点访问码解锁",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                            ServerType.values().forEach { type ->
+                                FilterChip(
+                                    selected = editServerType == type.key,
+                                    onClick = { editServerType = type.key },
+                                    label = { Text(type.displayName) },
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
-                            Switch(
-                                checked = editPrivateMode,
-                                onCheckedChange = { editPrivateMode = it }
+                        }
+                        if (editServerType == "opds") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "OPDS 通用协议（HTTP Basic 认证）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = editBasicUser,
+                                onValueChange = { editBasicUser = it; urlSavedHint = false },
+                                label = { Text("用户名") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = editBasicPass,
+                                onValueChange = { editBasicPass = it; urlSavedHint = false },
+                                label = { Text("密码") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("是否启用私人模式", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "服务端开启了 INVITE_MODE 时需要先输入站点访问码解锁",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = editPrivateMode,
+                                    onCheckedChange = { editPrivateMode = it }
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
@@ -222,8 +274,9 @@ fun LoginScreen(
                                     settingsRepository.saveServerUrl(editUrl)
                                     settingsRepository.saveServerName(editName)
                                     settingsRepository.saveServerPrivacy(editPrivateMode, existingAccessCode)
+                                    settingsRepository.saveServerType(editServerType, editBasicUser, editBasicPass)
                                     urlSavedHint = true
-                                    if (editPrivateMode) {
+                                    if (editServerType != "opds" && editPrivateMode) {
                                         showServerCaptchaDialog = true
                                     } else {
                                         showServerConfig = false
@@ -239,7 +292,12 @@ fun LoginScreen(
                         if (urlSavedHint) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "已保存" + if (editPrivateMode) "，请完成人机验证" else "",
+                                text = if (editServerType == "opds")
+                                    "已保存，OPDS 连接不需要登录"
+                                else if (editPrivateMode)
+                                    "已保存，请完成人机验证"
+                                else
+                                    "已保存",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary
                             )

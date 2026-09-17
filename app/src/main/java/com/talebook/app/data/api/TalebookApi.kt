@@ -67,6 +67,12 @@ interface TalebookApi {
         @Field("gen_time") genTime: String = ""
     ): Response<ApiResponse<Any>>
 
+    // MyBooks 的 welcome 解码字段 (改名 + JSON body)
+    @POST("api/access")
+    suspend fun mybooksAccess(
+        @Body body: com.talebook.app.data.model.MyBooksAccessRequest
+    ): Response<ApiResponse<Any>>
+
     @FormUrlEncoded
     @POST("api/user/sign_in")
     suspend fun loginWithPassword(
@@ -91,11 +97,20 @@ interface TalebookApi {
     @GET("api/shelf")
     suspend fun getShelf(): Response<ApiResponse<Any>>
 
+    @GET("api/wants")
+    suspend fun getWants(): Response<ApiResponse<Any>>
+
     // 这个端点服务端用 json_decode(self.request.body) 解析，必须发 JSON body
     @POST("api/book/{id}/shelf")
     suspend fun toggleShelf(
         @Path("id") bookId: Int,
         @Body body: com.talebook.app.data.model.ShelfToggleRequest
+    ): Response<ApiResponse<Any>>
+
+    @POST("api/book/{id}/wants")
+    suspend fun toggleWants(
+        @Path("id") bookId: Int,
+        @Body body: com.talebook.app.data.model.WantsToggleRequest
     ): Response<ApiResponse<Any>>
 
     // 人机验证相关
@@ -104,4 +119,19 @@ interface TalebookApi {
 
     @GET("api/captcha/image")
     suspend fun getCaptchaImage(): Response<CaptchaImageResponse>
+
+    // mybooks 完整书库
+    @GET("api/all")
+    suspend fun getAllBooks(
+        @Query("start") start: Int = 0,
+        @Query("size") size: Int = 30
+    ): Response<ApiResponse<Any>>
+
+    // talebook 完整书库
+    @GET("api/library")
+    suspend fun getLibraryTalebook(
+        @Query("publisher") publisher: String? = null,
+        @Query("author") author: String? = null,
+        @Query("tag") tag: String? = null
+    ): Response<ApiResponse<Any>>
 }

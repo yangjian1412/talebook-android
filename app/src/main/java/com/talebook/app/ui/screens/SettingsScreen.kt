@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
@@ -40,6 +42,7 @@ import com.talebook.app.data.repository.LoginResult
 import com.talebook.app.data.repository.ReaderBackupRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.data.server.ServerType
 import com.talebook.app.ui.components.LoginCaptchaDialog
 import com.talebook.app.ui.components.UnlockSiteDialog
 import com.talebook.app.ui.theme.AppAccentPalette
@@ -675,7 +678,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.2.3beta3",
+                text = "Tale Book v2.3.0alpha",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -801,6 +804,11 @@ private fun ServerEditDialog(
     var password by remember(server) { mutableStateOf(server?.password.orEmpty()) }
     var loginMode by remember(server) { mutableStateOf(server?.loginMode?.ifBlank { "password" } ?: "password") }
     var isPrivateMode by remember(server) { mutableStateOf(server?.isPrivateMode == true) }
+    var serverType by remember(server) {
+        mutableStateOf(ServerType.fromKey(server?.serverType ?: "talebook"))
+    }
+    var basicUser by remember(server) { mutableStateOf(server?.httpBasicUser.orEmpty()) }
+    var basicPass by remember(server) { mutableStateOf(server?.httpBasicPass.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -821,65 +829,108 @@ private fun ServerEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Text(
+                    text = "服务端类型",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("是否启用私人模式", style = MaterialTheme.typography.bodyMedium)
+                    ServerType.values().forEach { type ->
+                        FilterChip(
+                            selected = serverType == type,
+                            onClick = { serverType = type },
+                            label = { Text(type.displayName) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                if (serverType == ServerType.OPDS) {
+                    Text(
+                        text = "OPDS 通用协议（HTTP Basic 认证），保存后会用 Basic 认证测试连接。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = basicUser,
+                        onValueChange = { basicUser = it },
+                        label = { Text("用户名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = basicPass,
+                        onValueChange = { basicPass = it },
+                        label = { Text("密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("是否启用私人模式", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "服务端开启了 INVITE_MODE 时需要先输入站点访问码解锁",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        CompactSwitch(
+                            checked = isPrivateMode,
+                            onCheckedChange = { isPrivateMode = it }
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = loginMode == "password",
+                            onClick = { loginMode = "password" },
+                            label = { Text("账号密码") }
+                        )
+                        FilterChip(
+                            selected = loginMode == "guest",
+                            onClick = { loginMode = "guest" },
+                            label = { Text("访客登录") }
+                        )
+                    }
+                    if (loginMode == "password") {
+                        OutlinedTextField(
+                            value = username,
+                            onValueChange = { username = it },
+                            label = { Text("账号") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = { password = it },
+                            label = { Text("密码") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
                         Text(
-                            "服务端开启了 INVITE_MODE 时需要先输入站点访问码解锁",
+                            text = "访客登录无需填写凭据，保存后可直接连接。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    CompactSwitch(
-                        checked = isPrivateMode,
-                        onCheckedChange = { isPrivateMode = it }
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = loginMode == "password",
-                        onClick = { loginMode = "password" },
-                        label = { Text("账号密码") }
-                    )
-                    FilterChip(
-                        selected = loginMode == "guest",
-                        onClick = { loginMode = "guest" },
-                        label = { Text("访客登录") }
-                    )
-                }
-                if (loginMode == "password") {
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it },
-                        label = { Text("账号") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("密码") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                } else {
-                    Text(
-                        text = "访客登录无需填写凭据，保存后可直接连接。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (isPrivateMode) {
-                    Text(
-                        text = "保存后会弹出站点访问码 + 验证码窗口，完成后写入 cookie。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (isPrivateMode) {
+                        Text(
+                            text = "保存后会弹出站点访问码 + 验证码窗口，完成后写入 cookie。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         },
@@ -891,13 +942,16 @@ private fun ServerEditDialog(
                             id = server?.id.orEmpty(),
                             name = name.ifBlank { baseUrl },
                             baseUrl = baseUrl,
-                            loginMode = loginMode,
-                            username = if (loginMode == "password") username else "访客",
-                            password = if (loginMode == "password") password else "",
+                            loginMode = if (serverType == ServerType.OPDS) "guest" else loginMode,
+                            username = if (serverType == ServerType.OPDS) "" else if (loginMode == "password") username else "访客",
+                            password = if (serverType == ServerType.OPDS) "" else if (loginMode == "password") password else "",
                             accessCode = "",
-                            isPrivateMode = isPrivateMode,
-                            siteAccessCode = "",
+                            isPrivateMode = serverType != ServerType.OPDS && isPrivateMode,
+                            siteAccessCode = server?.siteAccessCode.orEmpty(),
                             nickname = server?.nickname.orEmpty(),
+                            serverType = serverType.key,
+                            httpBasicUser = if (serverType == ServerType.OPDS) basicUser else "",
+                            httpBasicPass = if (serverType == ServerType.OPDS) basicPass else "",
                             createdAt = server?.createdAt ?: System.currentTimeMillis()
                         )
                     )

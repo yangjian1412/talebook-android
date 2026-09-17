@@ -26,7 +26,11 @@ data class Book(
     @SerializedName("count_visit") val countVisit: Int = 0,
     @SerializedName("count_download") val countDownload: Int = 0,
     @SerializedName("scope") val scope: String = "public",
-    @SerializedName("timestamp") val timestamp: String = ""
+    @SerializedName("timestamp") val timestamp: String = "",
+    @SerializedName("author") val author: String = "",
+    @SerializedName("download_url") val downloadUrl: String? = null,
+    @SerializedName("download_mime") val downloadMime: String? = null,
+    @SerializedName("source") val source: String = ""
 )
 
 data class BookDetail(
@@ -73,7 +77,11 @@ fun BookDetail.coverPath(): String = cover.ifBlank { img.ifBlank { thumb } }
 data class ReadState(
     @SerializedName("page") val page: Int = 0,
     @SerializedName("percentage") val percentage: Double = 0.0,
-    @SerializedName("updated") val updated: String = ""
+    @SerializedName("updated") val updated: String = "",
+    @SerializedName("favorite") val favorite: Boolean = false,
+    @SerializedName("shelf") val shelf: Boolean = false,
+    @SerializedName("wants") val wants: Boolean = false,
+    @SerializedName("read_state") val readState: Int = 0
 )
 
 /**

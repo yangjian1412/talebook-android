@@ -31,6 +31,9 @@ data class LibraryServerConfig(
     val isPrivateMode: Boolean = false,
     val siteAccessCode: String? = "",
     val nickname: String = "",
+    val serverType: String? = "talebook",
+    val httpBasicUser: String? = "",
+    val httpBasicPass: String? = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -435,6 +438,29 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
             }
             prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
         }
+    }
+
+    suspend fun saveServerType(serverType: String, basicUser: String, basicPass: String) {
+        context.dataStore.edit { prefs ->
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            val servers = serversFromPrefs(prefs).map { server ->
+                if (server.id == activeId) {
+                    server.copy(
+                        serverType = serverType,
+                        httpBasicUser = if (serverType == "opds") basicUser else "",
+                        httpBasicPass = if (serverType == "opds") basicPass else "",
+                        updatedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    server
+                }
+            }
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
+        }
+    }
+
+    val activeServerType: Flow<String> = context.dataStore.data.map { prefs ->
+        activeServerFromPrefs(prefs).serverType ?: "talebook"
     }
 
     suspend fun saveLoginInfo(mode: String, username: String, nickname: String) {
