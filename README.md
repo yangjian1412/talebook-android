@@ -1,10 +1,18 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.3beta1`
+> 当前版本：`2.2.3beta2`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.2.3beta2 更新日志
+
+- 完整人机验证支持：客户端支持服务端图形验证码（image provider）。服务端启用 captcha 时，登录页与设置页书库配置会自动探测 `api/captcha/config`，需要时显示验证码图片 + 输入框 + 刷新按钮；登录前必须输入正确的验证码，验证码 cookie 由 OkHttp 持久化（2 分钟有效）。
+- 极验（GeeTest v4）暂不内置支持：服务端启用极验时弹说明提示，引导用户先在 Web 端完成首次登录以建立 cookie。
+- 设置页多书库登录体验统一：每次新增/编辑书库都走完整登录流程——探测 unlockSite → 探测 login captcha → 必要时依次弹访问码对话框和登录验证码对话框。完成登录后自动写入 cookie（OkHttp PersistentCookieJar）。
+- 抽象 `UnlockSiteDialog` / `LoginCaptchaDialog` 共用组件（`app/src/main/java/com/talebook/app/ui/components/CaptchaDialogs.kt`），登录页与设置页复用同一套实现。
+- 应用版本升级至 2.2.3beta2。
 
 ### 2.2.3beta1 更新日志
 
@@ -12,6 +20,13 @@
 - 支持 Talebook 私人模式（INVITE_MODE）：服务器配置对话框新增"是否启用私人模式"开关，启用后增加"私人模式访问码"输入项；登录流程会先调用 `api/welcome` 解锁站点，再走账号密码/访问码/访客登录。
 - 老用户数据兼容：`LibraryServerConfig` 新增字段为 nullable，老 JSON 数据反序列化不再崩溃。
 - 应用版本升级至 2.2.3beta1。
+
+### 2.2.3beta1 补充（人机验证支持）
+
+- 支持服务端图形验证码（image provider，Talebook 默认无配置 captcha）：登录页密码表单底部自动探测 `api/captcha/config`，启用时展示验证码图片 + 输入框 + 刷新按钮。`api/welcome`（解锁站点）与 `api/user/sign_in`（账号登录）都会在启用 captcha 的场景下要求携带 `captcha_code` 字段。验证码 cookie（`captcha_answer` / `captcha_generate_time`）由 OkHttp `PersistentCookieJar` 持久化，2 分钟有效。
+- 极验（GeeTest v4）暂不内置支持：服务端启用极验时，App 登录页会弹出说明弹窗，引导用户先在浏览器登录一次以建立 cookie，后续会话由 cookie 维持，避免空提示。
+- 失败自动刷新：登录或解锁返回 `captcha.invalid` 时自动刷新一张新图，无需手动刷新。
+- 兼容未启用 captcha 的服务端：探测到 `config.enabled = false` 或 `scenes.login/welcome = false` 时不显示验证码 UI，行为与之前一致。
 
 ### 2.2.2beta2 更新日志
 

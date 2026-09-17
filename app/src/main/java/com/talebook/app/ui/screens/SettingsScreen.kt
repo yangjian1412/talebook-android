@@ -33,11 +33,15 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.data.repository.AuthRepository
+import com.talebook.app.data.repository.CaptchaRepository
+import com.talebook.app.data.repository.CaptchaStatus
 import com.talebook.app.data.repository.LibraryServerConfig
 import com.talebook.app.data.repository.LoginResult
 import com.talebook.app.data.repository.ReaderBackupRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.ui.components.LoginCaptchaDialog
+import com.talebook.app.ui.components.UnlockSiteDialog
 import com.talebook.app.ui.theme.AppAccentPalette
 import com.talebook.app.ui.theme.ThemePresets
 import com.talebook.app.ui.theme.toColor
@@ -80,9 +84,60 @@ fun SettingsScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var editingServer by remember { mutableStateOf<LibraryServerConfig?>(null) }
     var showServerDialog by remember { mutableStateOf(false) }
+    var pendingUnlock by remember { mutableStateOf<UnlockPendingState?>(null) }
+    var pendingLogin by remember { mutableStateOf<LoginPendingState?>(null) }
+    var serverLoginError by remember { mutableStateOf<String?>(null) }
     val authRepository = remember { AuthRepository() }
     val readerCacheRepository = remember { ReaderCacheRepository() }
     val readerBackupRepository = remember { ReaderBackupRepository() }
+    val captchaRepository = remember { CaptchaRepository() }
+
+    fun handleServerSave(server: LibraryServerConfig) {
+        scope.launch {
+            RetrofitClient.updateBaseUrl(server.baseUrl)
+            if (server.isPrivateMode) {
+                val welcomeStatus = captchaRepository.probe("welcome")
+                if (welcomeStatus !is CaptchaStatus.Disabled) {
+                    pendingUnlock = UnlockPendingState(server = server, url = server.baseUrl)
+                    return@launch
+                }
+            }
+            val savedId = settingsRepository.upsertLibraryServer(server)
+            settingsRepository.setActiveLibraryServer(savedId)
+            val saved = server.copy(id = savedId)
+            val loginStatus = captchaRepository.probe("login")
+            if (loginStatus is CaptchaStatus.Image) {
+                pendingLogin = LoginPendingState(
+                    server = saved,
+                    url = server.baseUrl,
+                    username = if (server.loginMode == "password") server.username else "",
+                    password = if (server.loginMode == "password") server.password else "",
+                    isGuest = server.loginMode == "guest"
+                )
+                return@launch
+            }
+            val result = when (saved.loginMode) {
+                "password" -> authRepository.loginWithPassword(saved.username, saved.password)
+                "guest" -> authRepository.loginWithPassword("", "")
+                else -> LoginResult.Failure("unknown mode")
+            }
+            when (result) {
+                is LoginResult.Success -> {
+                    settingsRepository.saveLoginInfo(result.mode, result.username, result.nickname)
+                    settingsRepository.saveLoginSecret(
+                        result.mode, result.username,
+                        if (saved.loginMode == "guest") "" else saved.password,
+                        "", result.nickname
+                    )
+                    editingServer = null
+                    showServerDialog = false
+                }
+                is LoginResult.Failure -> {
+                    serverLoginError = result.message
+                }
+            }
+        }
+    }
 
     LaunchedEffect(homeTabs) {
         val valid = when (homeTabs) {
@@ -156,26 +211,98 @@ fun SettingsScreen(
             server = editingServer,
             defaultName = activeServer?.name.orEmpty(),
             onDismiss = { showServerDialog = false; editingServer = null },
-            onSave = { server ->
+            onSave = { server -> handleServerSave(server) }
+        )
+    }
+
+    pendingUnlock?.let { state ->
+        UnlockSiteDialog(
+            serverUrl = state.url,
+            onDismiss = {
+                pendingUnlock = null
+                editingServer = null
+                showServerDialog = false
+            },
+            onSuccess = { inviteCode ->
                 scope.launch {
-                    val id = settingsRepository.upsertLibraryServer(server)
-                    RetrofitClient.updateBaseUrl(server.baseUrl)
-                    val authRepo = AuthRepository()
-                    if (server.isPrivateMode && !server.siteAccessCode.isNullOrBlank()) {
-                        authRepo.unlockSite(server.siteAccessCode)
+                    val savedId = settingsRepository.upsertLibraryServer(
+                        state.server.copy(siteAccessCode = inviteCode)
+                    )
+                    settingsRepository.setActiveLibraryServer(savedId)
+                    val updatedServer = state.server.copy(id = savedId, siteAccessCode = inviteCode)
+                    pendingUnlock = null
+                    val loginStatus = captchaRepository.probe("login")
+                    if (loginStatus is CaptchaStatus.Image) {
+                        pendingLogin = LoginPendingState(
+                            server = updatedServer,
+                            url = state.url,
+                            username = if (updatedServer.loginMode == "password") updatedServer.username else "",
+                            password = if (updatedServer.loginMode == "password") updatedServer.password else "",
+                            isGuest = updatedServer.loginMode == "guest"
+                        )
+                    } else {
+                        val result = when (updatedServer.loginMode) {
+                            "password" -> authRepository.loginWithPassword(updatedServer.username, updatedServer.password)
+                            "guest" -> authRepository.loginWithPassword("", "")
+                            else -> LoginResult.Failure("unknown mode")
+                        }
+                        when (result) {
+                            is LoginResult.Success -> {
+                                settingsRepository.saveLoginInfo(result.mode, result.username, result.nickname)
+                                settingsRepository.saveLoginSecret(
+                                    result.mode, result.username,
+                                    if (updatedServer.loginMode == "guest") "" else updatedServer.password,
+                                    "", result.nickname
+                                )
+                                editingServer = null
+                                showServerDialog = false
+                            }
+                            is LoginResult.Failure -> {
+                                serverLoginError = result.message
+                            }
+                        }
                     }
-                    val loginResult = when (server.loginMode) {
-                        "password" -> authRepo.loginWithPassword(server.username, server.password)
-                        "guest" -> authRepo.loginWithPassword("", "")
-                        else -> LoginResult.Failure("unknown mode")
-                    }
-                    if (loginResult is com.talebook.app.data.repository.LoginResult.Success) {
-                        settingsRepository.saveLoginInfo(loginResult.mode, loginResult.username, loginResult.nickname)
-                        settingsRepository.saveLoginSecret(loginResult.mode, loginResult.username, server.password, "", loginResult.nickname)
-                    }
-                    showServerDialog = false
-                    editingServer = null
                 }
+            }
+        )
+    }
+
+    pendingLogin?.let { state ->
+        LoginCaptchaDialog(
+            serverUrl = state.url,
+            username = state.username,
+            password = state.password,
+            isGuest = state.isGuest,
+            onDismiss = {
+                pendingLogin = null
+                editingServer = null
+                showServerDialog = false
+            },
+            onSuccess = { mode, username, nickname ->
+                scope.launch {
+                    settingsRepository.saveLoginInfo(mode, username, nickname)
+                    settingsRepository.saveLoginSecret(
+                        mode,
+                        username,
+                        if (state.isGuest) "" else state.password,
+                        "",
+                        nickname
+                    )
+                    pendingLogin = null
+                    editingServer = null
+                    showServerDialog = false
+                }
+            }
+        )
+    }
+
+    serverLoginError?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { serverLoginError = null },
+            title = { Text("登录失败") },
+            text = { Text(msg) },
+            confirmButton = {
+                TextButton(onClick = { serverLoginError = null }) { Text("关闭") }
             }
         )
     }
@@ -548,7 +675,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.2.0",
+                text = "Tale Book v2.2.3beta2",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -674,7 +801,6 @@ private fun ServerEditDialog(
     var password by remember(server) { mutableStateOf(server?.password.orEmpty()) }
     var loginMode by remember(server) { mutableStateOf(server?.loginMode?.ifBlank { "password" } ?: "password") }
     var isPrivateMode by remember(server) { mutableStateOf(server?.isPrivateMode == true) }
-    var siteAccessCode by remember(server) { mutableStateOf(server?.siteAccessCode.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -713,17 +839,6 @@ private fun ServerEditDialog(
                         onCheckedChange = { isPrivateMode = it }
                     )
                 }
-                if (isPrivateMode) {
-                    OutlinedTextField(
-                        value = siteAccessCode,
-                        onValueChange = { siteAccessCode = it },
-                        label = { Text("私人模式访问码") },
-                        placeholder = { Text("服务端「管理 → 系统设置 → 邀请/访问码」配置") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = loginMode == "password",
@@ -759,6 +874,13 @@ private fun ServerEditDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (isPrivateMode) {
+                    Text(
+                        text = "保存后会弹出站点访问码 + 验证码窗口，完成后写入 cookie。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
         confirmButton = {
@@ -774,17 +896,30 @@ private fun ServerEditDialog(
                             password = if (loginMode == "password") password else "",
                             accessCode = "",
                             isPrivateMode = isPrivateMode,
-                            siteAccessCode = if (isPrivateMode) siteAccessCode else "",
+                            siteAccessCode = "",
                             nickname = server?.nickname.orEmpty(),
                             createdAt = server?.createdAt ?: System.currentTimeMillis()
                         )
                     )
                 },
                 enabled = baseUrl.isNotBlank()
-            ) { Text("保存") }
+            ) { Text(if (server == null) "添加并登录" else "保存并重新登录") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
 }
+
+private data class UnlockPendingState(
+    val server: LibraryServerConfig,
+    val url: String
+)
+
+private data class LoginPendingState(
+    val server: LibraryServerConfig,
+    val url: String,
+    val username: String,
+    val password: String,
+    val isGuest: Boolean
+)

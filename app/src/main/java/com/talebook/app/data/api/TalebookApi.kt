@@ -59,14 +59,16 @@ interface TalebookApi {
     @FormUrlEncoded
     @POST("api/welcome")
     suspend fun loginWithCode(
-        @Field("invite_code") code: String
+        @Field("invite_code") code: String,
+        @Field("captcha_code") captchaCode: String = ""
     ): Response<ApiResponse<Any>>
 
     @FormUrlEncoded
     @POST("api/user/sign_in")
     suspend fun loginWithPassword(
         @Field("username") username: String,
-        @Field("password") password: String
+        @Field("password") password: String,
+        @Field("captcha_code") captchaCode: String = ""
     ): Response<ApiResponse<Any>>
 
     @GET("api/user/sign_out")
@@ -87,4 +89,11 @@ interface TalebookApi {
         @Path("id") bookId: Int,
         @Body body: com.talebook.app.data.model.ShelfToggleRequest
     ): Response<ApiResponse<Any>>
+
+    // 人机验证相关
+    @GET("api/captcha/config")
+    suspend fun getCaptchaConfig(): Response<CaptchaConfigResponse>
+
+    @GET("api/captcha/image")
+    suspend fun getCaptchaImage(): Response<CaptchaImageResponse>
 }

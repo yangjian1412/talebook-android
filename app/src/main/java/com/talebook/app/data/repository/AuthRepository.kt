@@ -18,9 +18,9 @@ sealed class LoginResult {
 class AuthRepository {
     private val api get() = RetrofitClient.getApi()
 
-    suspend fun unlockSite(inviteCode: String): LoginResult = withContext(Dispatchers.IO) {
+    suspend fun unlockSite(inviteCode: String, captchaCode: String = ""): LoginResult = withContext(Dispatchers.IO) {
         try {
-            val resp = api.loginWithCode(inviteCode)
+            val resp = api.loginWithCode(inviteCode, captchaCode)
             val body = resp.body()
             when {
                 !resp.isSuccessful -> LoginResult.Failure("站点访问码校验失败 (HTTP ${resp.code()})")
@@ -30,7 +30,7 @@ class AuthRepository {
                     username = "访客",
                     nickname = body.user?.nickname?.takeIf { it.isNotBlank() } ?: "访客"
                 )
-                body.err == "captcha.invalid" -> LoginResult.Failure("服务端启用了人机验证，请先在 Web 端完成登录或联系管理员")
+                body.err == "captcha.invalid" -> LoginResult.Failure("人机验证失败 (${body.msg ?: "captcha.invalid"})")
                 else -> LoginResult.Failure(body.msg ?: "站点访问码错误 (${body.err})")
             }
         } catch (e: Exception) {
@@ -38,18 +38,18 @@ class AuthRepository {
         }
     }
 
-    suspend fun loginWithCode(code: String): LoginResult = withContext(Dispatchers.IO) {
+    suspend fun loginWithCode(code: String, captchaCode: String = ""): LoginResult = withContext(Dispatchers.IO) {
         try {
-            val resp = api.loginWithCode(code)
+            val resp = api.loginWithCode(code, captchaCode)
             parseLoginResponse(resp.code(), resp.body(), resp.errorBody()?.string(), mode = "code", username = "访客")
         } catch (e: Exception) {
             LoginResult.Failure(e.message ?: "网络错误")
         }
     }
 
-    suspend fun loginWithPassword(username: String, password: String): LoginResult = withContext(Dispatchers.IO) {
+    suspend fun loginWithPassword(username: String, password: String, captchaCode: String = ""): LoginResult = withContext(Dispatchers.IO) {
         try {
-            val resp = api.loginWithPassword(username.trim().lowercase(), password)
+            val resp = api.loginWithPassword(username.trim().lowercase(), password, captchaCode)
             parseLoginResponse(resp.code(), resp.body(), resp.errorBody()?.string(), mode = "password", username = username)
         } catch (e: Exception) {
             LoginResult.Failure(e.message ?: "网络错误")

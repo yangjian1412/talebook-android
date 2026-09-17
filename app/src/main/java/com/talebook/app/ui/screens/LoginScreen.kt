@@ -1,5 +1,7 @@
 package com.talebook.app.ui.screens
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -11,6 +13,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonOutline
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -19,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -27,11 +31,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.graphics.BitmapFactory
+import android.util.Base64
 import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.ui.components.CaptchaImageView
+import com.talebook.app.ui.components.UnlockSiteDialog
+import com.talebook.app.viewmodel.CaptchaUiState
 import com.talebook.app.viewmodel.LoginMode
 import com.talebook.app.viewmodel.LoginUiState
 import com.talebook.app.viewmodel.LoginViewModel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,19 +65,60 @@ fun LoginScreen(
     val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "")
     val serverName by settingsRepository.serverName.collectAsState(initial = "")
     val serverPrivateMode by settingsRepository.serverPrivateMode.collectAsState(initial = false)
-    val serverSiteAccessCode by settingsRepository.serverSiteAccessCode.collectAsState(initial = "")
     var showServerConfig by remember { mutableStateOf(false) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var editName by remember(serverName) { mutableStateOf(serverName) }
     var editPrivateMode by remember(serverPrivateMode) { mutableStateOf(serverPrivateMode) }
-    var editSiteCode by remember(serverSiteAccessCode) { mutableStateOf(serverSiteAccessCode) }
     var urlSavedHint by remember { mutableStateOf(false) }
+    var showServerCaptchaDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(showServerCaptchaDialog) {
+        if (showServerCaptchaDialog) {
+            try {
+                RetrofitClient.updateBaseUrl(editUrl)
+            } catch (_: Exception) {}
+        }
+    }
 
     LaunchedEffect(uiState.success) {
         if (uiState.success) {
             onLoginSuccess()
         }
+    }
+
+    if (uiState.showGeetestHint) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissGeetestHint,
+            title = { Text("需要极验验证") },
+            text = {
+                Text(
+                    "你的服务端启用了极验（GeeTest）人机验证。" +
+                            "极验需要在浏览器中加载其 SDK 才能完成验证，" +
+                            "App 暂不内置支持。请先用浏览器打开服务器登录页面完成账号验证，" +
+                            "后续会话由 cookie 维持。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissGeetestHint) {
+                    Text("我知道了")
+                }
+            }
+        )
+    }
+
+    if (showServerCaptchaDialog) {
+        UnlockSiteDialog(
+            serverUrl = editUrl,
+            onDismiss = {
+                showServerCaptchaDialog = false
+                showServerConfig = false
+            },
+            onSuccess = {
+                showServerCaptchaDialog = false
+                showServerConfig = false
+            }
+        )
     }
 
     Scaffold { padding ->
@@ -162,27 +213,21 @@ fun LoginScreen(
                                 onCheckedChange = { editPrivateMode = it }
                             )
                         }
-                        if (editPrivateMode) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = editSiteCode,
-                                onValueChange = { editSiteCode = it; urlSavedHint = false },
-                                label = { Text("私人模式访问码") },
-                                placeholder = { Text("服务端「管理 → 系统设置 → 邀请/访问码」配置") },
-                                singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
                                 RetrofitClient.updateBaseUrl(editUrl)
                                 scope.launch {
+                                    val existingAccessCode = settingsRepository.serverSiteAccessCode.first()
                                     settingsRepository.saveServerUrl(editUrl)
                                     settingsRepository.saveServerName(editName)
-                                    settingsRepository.saveServerPrivacy(editPrivateMode, editSiteCode)
+                                    settingsRepository.saveServerPrivacy(editPrivateMode, existingAccessCode)
                                     urlSavedHint = true
+                                    if (editPrivateMode) {
+                                        showServerCaptchaDialog = true
+                                    } else {
+                                        showServerConfig = false
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -194,7 +239,7 @@ fun LoginScreen(
                         if (urlSavedHint) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "已保存，下次启动生效",
+                                "已保存" + if (editPrivateMode) "，请完成人机验证" else "",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -332,4 +377,43 @@ private fun PasswordLoginForm(
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         modifier = Modifier.fillMaxWidth()
     )
+
+    if (uiState.captchaUi == CaptchaUiState.IMAGE) {
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "人机验证",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CaptchaImageView(base64 = uiState.captchaImageBase64)
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(onClick = { viewModel.refreshCaptcha() }) {
+                Icon(Icons.Default.Refresh, contentDescription = "刷新验证码")
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = uiState.captchaCode,
+            onValueChange = viewModel::setCaptchaCode,
+            label = { Text("验证码") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+            modifier = Modifier.fillMaxWidth()
+        )
+    } else if (uiState.captchaUi == CaptchaUiState.GEETEST || uiState.captchaUi == CaptchaUiState.UNKNOWN) {
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = if (uiState.captchaUi == CaptchaUiState.GEETEST)
+                "服务端启用了极验验证，需先在 Web 端登录后再回到 App"
+            else
+                "服务端启用了人机验证，请按提示操作",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
 }
