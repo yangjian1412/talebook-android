@@ -67,13 +67,15 @@ fun LoginScreen(
     val serverName by settingsRepository.serverName.collectAsState(initial = "")
     val serverPrivateMode by settingsRepository.serverPrivateMode.collectAsState(initial = false)
     val serverTypeStr by settingsRepository.activeServerType.collectAsState(initial = "talebook")
+    val storedBasicUser by settingsRepository.activeHttpBasicUser.collectAsState(initial = "")
+    val storedBasicPass by settingsRepository.activeHttpBasicPass.collectAsState(initial = "")
     var showServerConfig by remember { mutableStateOf(false) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var editName by remember(serverName) { mutableStateOf(serverName) }
     var editPrivateMode by remember(serverPrivateMode) { mutableStateOf(serverPrivateMode) }
     var editServerType by remember(serverTypeStr) { mutableStateOf(serverTypeStr) }
-    var editBasicUser by remember { mutableStateOf("") }
-    var editBasicPass by remember { mutableStateOf("") }
+    var editBasicUser by remember(storedBasicUser) { mutableStateOf(storedBasicUser) }
+    var editBasicPass by remember(storedBasicPass) { mutableStateOf(storedBasicPass) }
     var urlSavedHint by remember { mutableStateOf(false) }
     var showServerCaptchaDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -222,27 +224,9 @@ fun LoginScreen(
                         if (editServerType == "opds") {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "OPDS 通用协议（HTTP Basic 认证）",
+                                text = "OPDS 通用协议（HTTP Basic 认证）保存服务器设置后请在下方连接窗口填写用户名和密码",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = editBasicUser,
-                                onValueChange = { editBasicUser = it; urlSavedHint = false },
-                                label = { Text("用户名") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = editBasicPass,
-                                onValueChange = { editBasicPass = it; urlSavedHint = false },
-                                label = { Text("密码") },
-                                singleLine = true,
-                                visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                modifier = Modifier.fillMaxWidth()
                             )
                         } else {
                             Spacer(modifier = Modifier.height(8.dp))
@@ -274,7 +258,7 @@ fun LoginScreen(
                                     settingsRepository.saveServerUrl(editUrl)
                                     settingsRepository.saveServerName(editName)
                                     settingsRepository.saveServerPrivacy(editPrivateMode, existingAccessCode)
-                                    settingsRepository.saveServerType(editServerType, editBasicUser, editBasicPass)
+                                    settingsRepository.saveServerType(editServerType, "", "")
                                     urlSavedHint = true
                                     if (editServerType != "opds" && editPrivateMode) {
                                         showServerCaptchaDialog = true
@@ -308,38 +292,52 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Tab 切换
-            TabRow(
-                selectedTabIndex = when (uiState.mode) {
-                    LoginMode.PASSWORD -> 0
-                    LoginMode.GUEST -> 1
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Tab(
-                    selected = uiState.mode == LoginMode.PASSWORD,
-                    onClick = { viewModel.setMode(LoginMode.PASSWORD) },
-                    text = { Text("账号密码") },
-                    icon = { Icon(Icons.Default.Person, contentDescription = null) }
-                )
-                Tab(
-                    selected = uiState.mode == LoginMode.GUEST,
-                    onClick = { viewModel.setMode(LoginMode.GUEST) },
-                    text = { Text("游客") },
-                    icon = { Icon(Icons.Default.PersonOutline, contentDescription = null) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            when (uiState.mode) {
-                LoginMode.PASSWORD -> PasswordLoginForm(uiState, viewModel)
-                LoginMode.GUEST -> {
-                    Text(
-                        text = "无需账号密码，以访客身份浏览公共内容",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            if (!showServerConfig) {
+                if (editServerType == "opds") {
+                    OpdsLoginForm(
+                        serverUrl = editUrl,
+                        basicUser = editBasicUser,
+                        basicPass = editBasicPass,
+                        onBasicUserChange = { editBasicUser = it },
+                        onBasicPassChange = { editBasicPass = it },
+                        onSuccess = onLoginSuccess,
+                        settingsRepository = settingsRepository
                     )
+                } else {
+                    // Tab 切换
+                    TabRow(
+                        selectedTabIndex = when (uiState.mode) {
+                            LoginMode.PASSWORD -> 0
+                            LoginMode.GUEST -> 1
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Tab(
+                            selected = uiState.mode == LoginMode.PASSWORD,
+                            onClick = { viewModel.setMode(LoginMode.PASSWORD) },
+                            text = { Text("账号密码") },
+                            icon = { Icon(Icons.Default.Person, contentDescription = null) }
+                        )
+                        Tab(
+                            selected = uiState.mode == LoginMode.GUEST,
+                            onClick = { viewModel.setMode(LoginMode.GUEST) },
+                            text = { Text("游客") },
+                            icon = { Icon(Icons.Default.PersonOutline, contentDescription = null) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    when (uiState.mode) {
+                        LoginMode.PASSWORD -> PasswordLoginForm(uiState, viewModel)
+                        LoginMode.GUEST -> {
+                            Text(
+                                text = "无需账号密码，以访客身份浏览公共内容",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
 
@@ -394,6 +392,101 @@ fun LoginScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun OpdsLoginForm(
+    serverUrl: String,
+    basicUser: String,
+    basicPass: String,
+    onBasicUserChange: (String) -> Unit,
+    onBasicPassChange: (String) -> Unit,
+    onSuccess: () -> Unit,
+    settingsRepository: SettingsRepository
+) {
+    var isLoading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val repository = remember(serverUrl, basicUser, basicPass) {
+        com.talebook.app.data.opds.OpdsRepository(serverUrl, basicUser, basicPass)
+    }
+
+    Text(
+        text = "OPDS 通用协议",
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "OPDS 服务端不支持账号密码登录，使用 HTTP Basic 认证。\n连接时使用上述用户名/密码访问服务端。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+
+    OutlinedTextField(
+        value = basicUser,
+        onValueChange = { onBasicUserChange(it); error = null },
+        label = { Text("用户名") },
+        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    OutlinedTextField(
+        value = basicPass,
+        onValueChange = { onBasicPassChange(it); error = null },
+        label = { Text("密码") },
+        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        modifier = Modifier.fillMaxWidth()
+    )
+    if (error != null) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = error ?: "",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
+    Spacer(modifier = Modifier.height(24.dp))
+    Button(
+        onClick = {
+            if (basicUser.isBlank()) {
+                error = "请输入用户名"
+                return@Button
+            }
+            isLoading = true
+            error = null
+            scope.launch {
+                val result = repository.testConnection()
+                if (result.isSuccess) {
+                    settingsRepository.saveServerType("opds", basicUser, basicPass)
+                    isLoading = false
+                    onSuccess()
+                } else {
+                    isLoading = false
+                    error = "连接失败：${result.exceptionOrNull()?.message ?: "未知错误"}"
+                }
+            }
+        },
+        enabled = !isLoading,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("连接中...")
+        } else {
+            Text("连接")
         }
     }
 }

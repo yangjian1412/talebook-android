@@ -463,6 +463,14 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         activeServerFromPrefs(prefs).serverType ?: "talebook"
     }
 
+    val activeHttpBasicUser: Flow<String> = context.dataStore.data.map { prefs ->
+        activeServerFromPrefs(prefs).httpBasicUser.orEmpty()
+    }
+
+    val activeHttpBasicPass: Flow<String> = context.dataStore.data.map { prefs ->
+        activeServerFromPrefs(prefs).httpBasicPass.orEmpty()
+    }
+
     suspend fun saveLoginInfo(mode: String, username: String, nickname: String) {
         context.dataStore.edit { prefs ->
             val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
