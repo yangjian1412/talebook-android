@@ -28,6 +28,8 @@ data class LibraryServerConfig(
     val username: String = "",
     val password: String = "",
     val accessCode: String = "",
+    val isPrivateMode: Boolean = false,
+    val siteAccessCode: String? = "",
     val nickname: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
@@ -118,6 +120,14 @@ class SettingsRepository(private val context: Context) {
 
     val serverName: Flow<String> = context.dataStore.data.map { prefs ->
         activeServerFromPrefs(prefs).name.ifBlank { prefs[SERVER_NAME_KEY] ?: "" }
+    }
+
+    val serverPrivateMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        activeServerFromPrefs(prefs).isPrivateMode
+    }
+
+    val serverSiteAccessCode: Flow<String> = context.dataStore.data.map { prefs ->
+        activeServerFromPrefs(prefs).siteAccessCode.orEmpty()
     }
 
     val username: Flow<String> = context.dataStore.data.map { prefs ->
@@ -405,6 +415,24 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
                 }
             }
             prefs[SERVER_NAME_KEY] = name
+            prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
+        }
+    }
+
+    suspend fun saveServerPrivacy(isPrivateMode: Boolean, siteAccessCode: String) {
+        context.dataStore.edit { prefs ->
+            val activeId = prefs[ACTIVE_LIBRARY_SERVER_ID_KEY] ?: DEFAULT_SERVER_ID
+            val servers = serversFromPrefs(prefs).map { server ->
+                if (server.id == activeId) {
+                    server.copy(
+                        isPrivateMode = isPrivateMode,
+                        siteAccessCode = if (isPrivateMode) siteAccessCode else "",
+                        updatedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    server
+                }
+            }
             prefs[LIBRARY_SERVERS_KEY] = gson.toJson(servers)
         }
     }

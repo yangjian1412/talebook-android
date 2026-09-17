@@ -54,9 +54,13 @@ fun LoginScreen(
 
     val serverUrl by settingsRepository.serverUrl.collectAsState(initial = "")
     val serverName by settingsRepository.serverName.collectAsState(initial = "")
+    val serverPrivateMode by settingsRepository.serverPrivateMode.collectAsState(initial = false)
+    val serverSiteAccessCode by settingsRepository.serverSiteAccessCode.collectAsState(initial = "")
     var showServerConfig by remember { mutableStateOf(false) }
     var editUrl by remember(serverUrl) { mutableStateOf(serverUrl) }
     var editName by remember(serverName) { mutableStateOf(serverName) }
+    var editPrivateMode by remember(serverPrivateMode) { mutableStateOf(serverPrivateMode) }
+    var editSiteCode by remember(serverSiteAccessCode) { mutableStateOf(serverSiteAccessCode) }
     var urlSavedHint by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -140,12 +144,44 @@ fun LoginScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("是否启用私人模式", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "服务端开启了 INVITE_MODE 时需要先输入站点访问码解锁",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = editPrivateMode,
+                                onCheckedChange = { editPrivateMode = it }
+                            )
+                        }
+                        if (editPrivateMode) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = editSiteCode,
+                                onValueChange = { editSiteCode = it; urlSavedHint = false },
+                                label = { Text("私人模式访问码") },
+                                placeholder = { Text("服务端「管理 → 系统设置 → 邀请/访问码」配置") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
                                 RetrofitClient.updateBaseUrl(editUrl)
                                 scope.launch {
                                     settingsRepository.saveServerUrl(editUrl)
                                     settingsRepository.saveServerName(editName)
+                                    settingsRepository.saveServerPrivacy(editPrivateMode, editSiteCode)
                                     urlSavedHint = true
                                 }
                             },
@@ -172,18 +208,11 @@ fun LoginScreen(
             // Tab 切换
             TabRow(
                 selectedTabIndex = when (uiState.mode) {
-                    LoginMode.CODE -> 0
-                    LoginMode.PASSWORD -> 1
-                    LoginMode.GUEST -> 2
+                    LoginMode.PASSWORD -> 0
+                    LoginMode.GUEST -> 1
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Tab(
-                    selected = uiState.mode == LoginMode.CODE,
-                    onClick = { viewModel.setMode(LoginMode.CODE) },
-                    text = { Text("访问码") },
-                    icon = { Icon(Icons.Default.VpnKey, contentDescription = null) }
-                )
                 Tab(
                     selected = uiState.mode == LoginMode.PASSWORD,
                     onClick = { viewModel.setMode(LoginMode.PASSWORD) },
@@ -201,7 +230,6 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             when (uiState.mode) {
-                LoginMode.CODE -> CodeLoginForm(uiState, viewModel)
                 LoginMode.PASSWORD -> PasswordLoginForm(uiState, viewModel)
                 LoginMode.GUEST -> {
                     Text(
@@ -265,22 +293,6 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
-}
-
-@Composable
-private fun CodeLoginForm(
-    uiState: LoginUiState,
-    viewModel: LoginViewModel
-) {
-    OutlinedTextField(
-        value = uiState.code,
-        onValueChange = viewModel::setCode,
-        label = { Text("访问码") },
-        placeholder = { Text("请输入服务器设置的访问码") },
-        leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
-    )
 }
 
 @Composable

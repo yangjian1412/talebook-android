@@ -59,7 +59,7 @@ interface TalebookApi {
     @FormUrlEncoded
     @POST("api/welcome")
     suspend fun loginWithCode(
-        @Field("code") code: String
+        @Field("invite_code") code: String
     ): Response<ApiResponse<Any>>
 
     @FormUrlEncoded

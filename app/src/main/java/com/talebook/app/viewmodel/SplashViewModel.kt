@@ -35,8 +35,12 @@ class SplashViewModel(
                     val server = settingsRepository.activeLibraryServer.first()
                     if (server.loginMode.isBlank()) return@runCatching SplashNavigation.GoLogin
                     val authRepo = AuthRepository()
+                    if (server.isPrivateMode && !server.siteAccessCode.isNullOrBlank()) {
+                        val unlockResult = authRepo.unlockSite(server.siteAccessCode)
+                        if (unlockResult !is LoginResult.Success) return@runCatching SplashNavigation.GoLogin
+                    }
                     val loginResult = when (server.loginMode) {
-                        "code" -> if (server.accessCode.isNotBlank()) authRepo.loginWithCode(server.accessCode) else null
+                        "guest" -> authRepo.loginWithPassword("", "")
                         else -> if (server.username.isNotBlank() && server.password.isNotBlank())
                             authRepo.loginWithPassword(server.username, server.password) else null
                     }

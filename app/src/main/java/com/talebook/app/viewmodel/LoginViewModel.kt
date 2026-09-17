@@ -11,11 +11,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-enum class LoginMode { CODE, PASSWORD, GUEST }
+enum class LoginMode { PASSWORD, GUEST }
 
 data class LoginUiState(
     val mode: LoginMode = LoginMode.PASSWORD,
-    val code: String = "",
     val username: String = "",
     val password: String = "",
     val isLoading: Boolean = false,
@@ -34,27 +33,16 @@ class LoginViewModel(
     init {
         viewModelScope.launch {
             val server = settingsRepository.activeLibraryServer.first()
-            _uiState.value = when (server.loginMode) {
-                "password" -> _uiState.value.copy(
-                    mode = LoginMode.PASSWORD,
-                    username = server.username,
-                    password = server.password
-                )
-                "code" -> _uiState.value.copy(
-                    mode = LoginMode.CODE,
-                    code = server.accessCode
-                )
-                else -> _uiState.value
-            }
+            _uiState.value = _uiState.value.copy(
+                mode = if (server.loginMode == "guest") LoginMode.GUEST else LoginMode.PASSWORD,
+                username = server.username,
+                password = server.password
+            )
         }
     }
 
     fun setMode(mode: LoginMode) {
         _uiState.value = _uiState.value.copy(mode = mode, error = null)
-    }
-
-    fun setCode(code: String) {
-        _uiState.value = _uiState.value.copy(code = code, error = null)
     }
 
     fun setUsername(username: String) {
@@ -72,14 +60,20 @@ class LoginViewModel(
         _uiState.value = state.copy(isLoading = true, error = null)
 
         viewModelScope.launch {
-            val result = when (state.mode) {
-                LoginMode.CODE -> {
-                    if (state.code.isBlank()) {
-                        _uiState.value = _uiState.value.copy(isLoading = false, error = "请输入访问码")
+            val server = settingsRepository.activeLibraryServer.first()
+            if (server.isPrivateMode && !server.siteAccessCode.isNullOrBlank()) {
+                when (val unlock = authRepository.unlockSite(server.siteAccessCode)) {
+                    is LoginResult.Failure -> {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            error = unlock.message
+                        )
                         return@launch
                     }
-                    authRepository.loginWithCode(state.code)
+                    else -> Unit
                 }
+            }
+            val result = when (state.mode) {
                 LoginMode.PASSWORD -> {
                     if (state.username.isBlank() || state.password.isBlank()) {
                         _uiState.value = _uiState.value.copy(isLoading = false, error = "请输入账号和密码")
@@ -103,7 +97,7 @@ class LoginViewModel(
                         mode = result.mode,
                         username = result.username,
                         password = state.password,
-                        accessCode = state.code,
+                        accessCode = "",
                         nickname = result.nickname
                     )
                     _uiState.value = _uiState.value.copy(isLoading = false, success = true)

@@ -161,15 +161,17 @@ fun SettingsScreen(
                     val id = settingsRepository.upsertLibraryServer(server)
                     RetrofitClient.updateBaseUrl(server.baseUrl)
                     val authRepo = AuthRepository()
+                    if (server.isPrivateMode && !server.siteAccessCode.isNullOrBlank()) {
+                        authRepo.unlockSite(server.siteAccessCode)
+                    }
                     val loginResult = when (server.loginMode) {
                         "password" -> authRepo.loginWithPassword(server.username, server.password)
-                        "code" -> authRepo.loginWithCode(server.accessCode)
                         "guest" -> authRepo.loginWithPassword("", "")
                         else -> LoginResult.Failure("unknown mode")
                     }
                     if (loginResult is com.talebook.app.data.repository.LoginResult.Success) {
                         settingsRepository.saveLoginInfo(loginResult.mode, loginResult.username, loginResult.nickname)
-                        settingsRepository.saveLoginSecret(loginResult.mode, loginResult.username, server.password, server.accessCode, loginResult.nickname)
+                        settingsRepository.saveLoginSecret(loginResult.mode, loginResult.username, server.password, "", loginResult.nickname)
                     }
                     showServerDialog = false
                     editingServer = null
@@ -205,7 +207,7 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
-                text = if (loginMode.isBlank()) "当前未登录" else "当前：${nickname.ifBlank { "访客" }} · ${if (loginMode == "code") "访问码登录" else "账号密码登录"}",
+                text = if (loginMode.isBlank()) "当前未登录" else "当前：${nickname.ifBlank { "访客" }} · ${if (loginMode == "guest") "访客登录" else "账号密码登录"}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -218,7 +220,7 @@ fun SettingsScreen(
                                 Text(server.name.ifBlank { server.baseUrl }, style = MaterialTheme.typography.titleSmall)
                                 Text(server.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
-                                    text = if (server.loginMode.isBlank()) "未登录" else "${server.nickname.ifBlank { server.username.ifBlank { "已登录" } }} · ${if (server.loginMode == "code") "访问码" else "账号密码"}",
+                                    text = if (server.loginMode.isBlank()) "未登录" else "${server.nickname.ifBlank { server.username.ifBlank { "已登录" } }} · ${if (server.loginMode == "guest") "访客" else "账号密码"}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -670,8 +672,9 @@ private fun ServerEditDialog(
     var baseUrl by remember(server) { mutableStateOf(server?.baseUrl ?: "https://") }
     var username by remember(server) { mutableStateOf(server?.username.orEmpty()) }
     var password by remember(server) { mutableStateOf(server?.password.orEmpty()) }
-    var accessCode by remember(server) { mutableStateOf(server?.accessCode.orEmpty()) }
     var loginMode by remember(server) { mutableStateOf(server?.loginMode?.ifBlank { "password" } ?: "password") }
+    var isPrivateMode by remember(server) { mutableStateOf(server?.isPrivateMode == true) }
+    var siteAccessCode by remember(server) { mutableStateOf(server?.siteAccessCode.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -692,16 +695,40 @@ private fun ServerEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("是否启用私人模式", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "服务端开启了 INVITE_MODE 时需要先输入站点访问码解锁",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    CompactSwitch(
+                        checked = isPrivateMode,
+                        onCheckedChange = { isPrivateMode = it }
+                    )
+                }
+                if (isPrivateMode) {
+                    OutlinedTextField(
+                        value = siteAccessCode,
+                        onValueChange = { siteAccessCode = it },
+                        label = { Text("私人模式访问码") },
+                        placeholder = { Text("服务端「管理 → 系统设置 → 邀请/访问码」配置") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = loginMode == "password",
                         onClick = { loginMode = "password" },
                         label = { Text("账号密码") }
-                    )
-                    FilterChip(
-                        selected = loginMode == "code",
-                        onClick = { loginMode = "code" },
-                        label = { Text("访问码") }
                     )
                     FilterChip(
                         selected = loginMode == "guest",
@@ -725,14 +752,6 @@ private fun ServerEditDialog(
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
                     )
-                } else if (loginMode == "code") {
-                    OutlinedTextField(
-                        value = accessCode,
-                        onValueChange = { accessCode = it },
-                        label = { Text("访问码") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 } else {
                     Text(
                         text = "访客登录无需填写凭据，保存后可直接连接。",
@@ -753,7 +772,9 @@ private fun ServerEditDialog(
                             loginMode = loginMode,
                             username = if (loginMode == "password") username else "访客",
                             password = if (loginMode == "password") password else "",
-                            accessCode = if (loginMode == "code") accessCode else "",
+                            accessCode = "",
+                            isPrivateMode = isPrivateMode,
+                            siteAccessCode = if (isPrivateMode) siteAccessCode else "",
                             nickname = server?.nickname.orEmpty(),
                             createdAt = server?.createdAt ?: System.currentTimeMillis()
                         )

@@ -1,10 +1,17 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.2beta2`
+> 当前版本：`2.2.3beta1`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.2.3beta1 更新日志
+
+- 修复 Talebook v26.9.1+ 站点访问码登录失败：客户端 `api/welcome` 字段名由 `code` 修正为服务端要求的 `invite_code`。
+- 支持 Talebook 私人模式（INVITE_MODE）：服务器配置对话框新增"是否启用私人模式"开关，启用后增加"私人模式访问码"输入项；登录流程会先调用 `api/welcome` 解锁站点，再走账号密码/访问码/访客登录。
+- 老用户数据兼容：`LibraryServerConfig` 新增字段为 nullable，老 JSON 数据反序列化不再崩溃。
+- 应用版本升级至 2.2.3beta1。
 
 ### 2.2.2beta2 更新日志
 
