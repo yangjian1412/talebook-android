@@ -15,12 +15,34 @@ sealed class LoginResult {
     data class Failure(val message: String) : LoginResult()
 }
 
+data class GeetestParams(
+    val lotNumber: String,
+    val captchaOutput: String,
+    val passToken: String,
+    val genTime: String
+) {
+    val isComplete: Boolean
+        get() = lotNumber.isNotBlank() && captchaOutput.isNotBlank() &&
+                passToken.isNotBlank() && genTime.isNotBlank()
+}
+
 class AuthRepository {
     private val api get() = RetrofitClient.getApi()
 
-    suspend fun unlockSite(inviteCode: String, captchaCode: String = ""): LoginResult = withContext(Dispatchers.IO) {
+    suspend fun unlockSite(
+        inviteCode: String,
+        captchaCode: String = "",
+        geetest: GeetestParams? = null
+    ): LoginResult = withContext(Dispatchers.IO) {
         try {
-            val resp = api.loginWithCode(inviteCode, captchaCode)
+            val resp = api.loginWithCode(
+                inviteCode,
+                captchaCode,
+                geetest?.lotNumber.orEmpty(),
+                geetest?.captchaOutput.orEmpty(),
+                geetest?.passToken.orEmpty(),
+                geetest?.genTime.orEmpty()
+            )
             val body = resp.body()
             when {
                 !resp.isSuccessful -> LoginResult.Failure("站点访问码校验失败 (HTTP ${resp.code()})")
@@ -47,9 +69,22 @@ class AuthRepository {
         }
     }
 
-    suspend fun loginWithPassword(username: String, password: String, captchaCode: String = ""): LoginResult = withContext(Dispatchers.IO) {
+    suspend fun loginWithPassword(
+        username: String,
+        password: String,
+        captchaCode: String = "",
+        geetest: GeetestParams? = null
+    ): LoginResult = withContext(Dispatchers.IO) {
         try {
-            val resp = api.loginWithPassword(username.trim().lowercase(), password, captchaCode)
+            val resp = api.loginWithPassword(
+                username.trim().lowercase(),
+                password,
+                captchaCode,
+                geetest?.lotNumber.orEmpty(),
+                geetest?.captchaOutput.orEmpty(),
+                geetest?.passToken.orEmpty(),
+                geetest?.genTime.orEmpty()
+            )
             parseLoginResponse(resp.code(), resp.body(), resp.errorBody()?.string(), mode = "password", username = username)
         } catch (e: Exception) {
             LoginResult.Failure(e.message ?: "网络错误")

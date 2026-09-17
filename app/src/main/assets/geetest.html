@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>极验验证</title>
+  <script src="https://static.geetest.com/v4/gt4.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #status {
+      padding: 24px;
+      text-align: center;
+      color: #555;
+      font-size: 14px;
+    }
+    #captcha {
+      width: 100%;
+      min-height: 200px;
+    }
+    .error {
+      color: #d32f2f;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">正在加载极验组件...</div>
+  <div id="captcha"></div>
+  <script>
+    (function () {
+      var statusEl = document.getElementById('status');
+      var captchaEl = document.getElementById('captcha');
+      var initialized = false;
+
+      function showError(msg) {
+        statusEl.className = 'error';
+        statusEl.textContent = '极验加载失败：' + msg;
+        if (window.AndroidBridge && typeof window.AndroidBridge.onError === 'function') {
+          window.AndroidBridge.onError(String(msg));
+        }
+      }
+
+      function initWhenReady(captchaId) {
+        if (typeof initGeetest4 !== 'function') {
+          setTimeout(function () { initWhenReady(captchaId); }, 200);
+          return;
+        }
+        if (initialized) return;
+        if (!captchaId) {
+          showError('服务端 captchaId 为空');
+          return;
+        }
+        initialized = true;
+        statusEl.textContent = '请完成下方验证';
+        try {
+          initGeetest4({
+            captchaId: captchaId,
+            product: 'bind',
+            riskType: 'ai',
+            language: 'zho',
+            timeout: 10000,
+            onSuccess: function (result) {
+              if (window.AndroidBridge && typeof window.AndroidBridge.onSuccess === 'function') {
+                window.AndroidBridge.onSuccess(JSON.stringify({
+                  lot_number: result.lot_number || '',
+                  captcha_output: result.captcha_output || '',
+                  pass_token: result.pass_token || '',
+                  gen_time: result.gen_time || ''
+                }));
+              }
+            },
+            onError: function (err) {
+              var msg = (err && err.msg) ? err.msg : (typeof err === 'string' ? err : '未知错误');
+              showError(msg);
+            },
+            onClose: function () {
+              if (window.AndroidBridge && typeof window.AndroidBridge.onClose === 'function') {
+                window.AndroidBridge.onClose();
+              }
+            }
+          }, captchaEl);
+        } catch (e) {
+          showError(e && e.message ? e.message : e);
+        }
+      }
+
+      window.startGeetest = function (captchaId) {
+        initWhenReady(captchaId);
+      };
+
+      window.addEventListener('error', function (event) {
+        showError(event.message || '页面加载失败');
+      });
+    })();
+  </script>
+</body>
+</html>

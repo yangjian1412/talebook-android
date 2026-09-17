@@ -60,7 +60,11 @@ interface TalebookApi {
     @POST("api/welcome")
     suspend fun loginWithCode(
         @Field("invite_code") code: String,
-        @Field("captcha_code") captchaCode: String = ""
+        @Field("captcha_code") captchaCode: String = "",
+        @Field("lot_number") lotNumber: String = "",
+        @Field("captcha_output") captchaOutput: String = "",
+        @Field("pass_token") passToken: String = "",
+        @Field("gen_time") genTime: String = ""
     ): Response<ApiResponse<Any>>
 
     @FormUrlEncoded
@@ -68,7 +72,11 @@ interface TalebookApi {
     suspend fun loginWithPassword(
         @Field("username") username: String,
         @Field("password") password: String,
-        @Field("captcha_code") captchaCode: String = ""
+        @Field("captcha_code") captchaCode: String = "",
+        @Field("lot_number") lotNumber: String = "",
+        @Field("captcha_output") captchaOutput: String = "",
+        @Field("pass_token") passToken: String = "",
+        @Field("gen_time") genTime: String = ""
     ): Response<ApiResponse<Any>>
 
     @GET("api/user/sign_out")

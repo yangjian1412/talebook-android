@@ -1,10 +1,21 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.3beta2`
+> 当前版本：`2.2.3beta3`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.2.3beta3 更新日志
+
+- 极验（GeeTest v4）原生支持：**待测试**。服务端启用极验 captcha 时，App 在登录页和设置页书库配置自动探测 `api/captcha/config`，使用内置 WebView 加载 `gt4.js` SDK 完成拼图/滑动验证，验证成功后自动提交 4 个参数（`lot_number`、`captcha_output`、`pass_token`、`gen_time`）到 `api/welcome` / `api/user/sign_in`，由服务端调极验 `/validate` 完成最终校验。
+- 新的 WebView 组件：`app/src/main/java/com/talebook/app/ui/components/GeetestCaptchaView.kt`，通过 `addJavascriptInterface("AndroidBridge")` 把极验结果回传到 Kotlin。HTML 容器位于 `app/src/main/assets/geetest.html`，按需 `DisposableEffect` 中 `destroy()` 释放内存。
+- API 扩展：`TalebookApi.loginWithCode` / `loginWithPassword` 新增 4 个可选字段（极验），`AuthRepository` 新增 `GeetestParams` 数据类；`unlockSite` / `loginWithPassword` 增加可选 `geetest` 参数。
+- 极验与 image captcha 共存：`CaptchaStatus.Image` 显示 PNG + 输入框，`CaptchaStatus.Geetest` 显示 WebView，验证完成后自动 POST 请求，不需要再点确认按钮。
+- 与现有登录模式完全兼容：不启用 captcha、image captcha、极验三种模式按服务端配置自动选择，cookie 按 host 隔离互不影响；多书库切换与会话持久化逻辑不变。
+- **已知风险**：极验 SDK 依赖境外 CDN（`static.geetest.com`、`gcaptcha4.geetest.com`），国内网络下可能超时；部分国产 ROM 替换 WebView 实现可能报"环境不安全"，需要服务端关闭极验或用户切换为浏览器截图。
+- **测试状态**：当前 APK 已在本地机器启动测试，**尚未在真实极验服务端验证端到端流程**；欢迎有极验配置的用户反馈测试结果。
+- 应用版本升级至 2.2.3beta3。
 
 ### 2.2.3beta2 更新日志
 
