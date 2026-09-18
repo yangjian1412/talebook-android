@@ -49,7 +49,7 @@ import org.readium.r2.shared.util.Url
 import org.readium.r2.shared.util.data.ReadError
 
 @OptIn(ExperimentalReadiumApi::class)
-class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavigatorFragment.Listener {
+class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavigatorFragment.PaginationListener, PdfNavigatorFragment.Listener {
     private val sessionId: Long by lazy { requireArguments().getLong(ARG_SESSION_ID) }
     private val containerId: Int by lazy { View.generateViewId() }
     private var lastChapterName: String = ""
@@ -65,7 +65,8 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
         childFragmentManager.fragmentFactory = when (session) {
             is EpubReadiumSession -> session.navigatorFactory.createFragmentFactory(
                 initialLocator = session.initialLocator,
-                listener = this
+                listener = this,
+                paginationListener = this
             )
             is PdfReadiumSession -> session.navigatorFactory.createFragmentFactory(
                 initialLocator = session.initialLocator,
@@ -292,6 +293,19 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
 
     override fun onExternalLinkActivated(url: AbsoluteUrl) {
         android.util.Log.d("TaleReadium", "External link: $url")
+    }
+
+    override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {}
+
+    override fun onPageLoaded() {
+        val session = ReadiumSessionStore.get(sessionId) ?: return
+        val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
+        if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
+            val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !session.displaySettings.forcePublisherFonts
+            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val twoPageActive = session.displaySettings.twoPageMode && isLandscape
+            injectCustomCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
+        }
     }
 
 private suspend fun saveProgress(bookId: Int, locator: Locator) {
@@ -618,7 +632,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
             }
             if (twoPageActive) {
-                append("body { column-count: 2 !important; column-gap: 28px !important; column-fill: auto !important; }")
+                append("body { -webkit-column-count: 2 !important; column-count: 2 !important; column-width: auto !important; column-gap: 24px !important; column-fill: balance !important; max-width: none !important; width: auto !important; }")
             }
         }
         val escaped = css.replace("'", "\\'").replace("\n", " ")

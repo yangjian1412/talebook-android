@@ -683,7 +683,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.3.0alpha",
+                text = "Tale Book v2.3.0beta",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(

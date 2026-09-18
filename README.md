@@ -1,10 +1,28 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.2.3beta3`
+> 当前版本：`2.3.0beta`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.3.0beta 更新日志
+
+- 横屏双页显示：阅读设置新增「横屏双页显示」开关，开启后横屏或折叠屏展开状态下使用 CSS 双列布局呈现并排的两页内容；竖屏自动恢复单页。开关按用户选择持久化。
+- 应用版本升级至 2.3.0beta。
+
+### 2.3.0alpha 更新日志
+
+- 多服务端类型支持：登录页与设置页可切换 Talebook / MyBooks / OPDS 三种服务端类型。
+- OPDS 通用协议：通过 HTTP Basic 认证接入标准 OPDS 1.2 书库（不支持书架 / 收藏 / 阅读状态）。
+- MyBooks 适配：基于 PoxenStudio/mybooks（fork 自 talebook v25.06.26），调用 /api/access、/api/wants、/api/all，无需 captcha。
+- 服务端架构抽象：新增 ServerType 枚举、ServerCapabilities、ServerAdapter 接口与 Factory；原有 Talebook API 调用端点接入 TalebookAdapter。
+- OPDS 客户端：自实现轻量 OpdsClient（HTTP Basic 拦截器）、OpdsRepository、OpdsXmlParser、XmlLite（基于 XmlPullParser）。
+- LibraryServerConfig 扩展：新增 serverType、httpBasicUser、httpBasicPass 字段，全部 nullable 以兼容老数据。
+- Book 模型扩展：新增 wants / shelf / favorite / readState / downloadUrl / source 字段，适配多种服务端共用的归一模型。
+- SettingsRepository 新增 activeServerType / activeHttpBasicUser / activeHttpBasicPass Flow，供 UI 持久化用户上次选择。
+- 设置页与登录页：书库配置对话框加服务端类型 FilterChip；OPDS Basic Auth 输入位置调整，避免重复表单。
+- OPDS 凭据保存：OpdsLoginForm 连接测试成功后调用 saveServerType 写入 Basic Auth 凭据，重启 App 自动预填。
 
 ### 2.2.3beta3 更新日志
 
