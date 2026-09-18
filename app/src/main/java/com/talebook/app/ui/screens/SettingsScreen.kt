@@ -1,5 +1,7 @@
 ﻿package com.talebook.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -15,7 +17,9 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -78,6 +82,7 @@ fun SettingsScreen(
     val cacheLimitMb by settingsRepository.readerCacheLimitMb.collectAsState(initial = SettingsRepository.DEFAULT_CACHE_LIMIT_MB)
     val autoCacheOnWifi by settingsRepository.readerAutoCacheOnWifi.collectAsState(initial = false)
     val context = LocalContext.current
+    var showChangelog by remember { mutableStateOf(false) }
     var editCacheLimit by remember(cacheLimitMb) { mutableStateOf(cacheLimitMb.toString()) }
     var cacheMessage by remember { mutableStateOf<String?>(null) }
     var cacheSizeText by remember { mutableStateOf("未统计") }
@@ -686,13 +691,75 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "更新日志：移除在线阅读器；全局隐藏导航栏；阅读状态栏可隐藏；左右/上下独立页边距；主页缓存首屏 + 右上/下拉刷新；跳过验证直接进入；本地书架 (SAF 文件夹、不复制)；最近阅读来源标签。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val intent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://github.com/yangjian1412/talebook-android")
+                        )
+                        context.startActivity(intent)
+                    }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Public,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "GitHub 主页",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "github.com/yangjian1412/talebook-android",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    Icons.Default.OpenInNew,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showChangelog = true }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "查看完整更新日志",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "点击查看各版本详细改动",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
+    }
+
+    if (showChangelog) {
+        ChangelogDialog(onDismiss = { showChangelog = false })
     }
 }
 
@@ -977,3 +1044,156 @@ private data class LoginPendingState(
     val password: String,
     val isGuest: Boolean
 )
+
+@Composable
+private fun ChangelogDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("更新日志") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                ChangelogSection(
+                    version = "2.3.0alpha",
+                    items = listOf(
+                        "多服务端类型支持：登录页与设置页可切换 Talebook / MyBooks / OPDS 三种服务端类型。",
+                        "OPDS 通用协议：通过 HTTP Basic 认证接入标准 OPDS 1.2 书库（不支持书架 / 收藏 / 阅读状态）。",
+                        "MyBooks 适配：基于 PoxenStudio/mybooks（fork 自 talebook v25.06.26），调用 /api/access、/api/wants、/api/all，无需 captcha。",
+                        "服务端架构抽象：新增 ServerType 枚举、ServerCapabilities、ServerAdapter 接口与 Factory；原有 Talebook API 调用端点接入 TalebookAdapter。",
+                        "OPDS 客户端：自实现轻量 OpdsClient（HTTP Basic 拦截器）、OpdsRepository、OpdsXmlParser、XmlLite（基于 XmlPullParser）。",
+                        "LibraryServerConfig 扩展：新增 serverType、httpBasicUser、httpBasicPass 字段，全部 nullable 以兼容老数据。",
+                        "Book 模型扩展：新增 wants / shelf / favorite / readState / downloadUrl / source 字段，适配多种服务端共用的归一模型。",
+                        "SettingsRepository 新增 activeServerType / activeHttpBasicUser / activeHttpBasicPass Flow，供 UI 持久化用户上次选择。",
+                        "设置页与登录页：书库配置对话框加服务端类型 FilterChip；OPDS Basic Auth 输入位置调整，避免重复表单。",
+                        "OPDS 凭据保存：OpdsLoginForm 连接测试成功后调用 saveServerType 写入 Basic Auth 凭据，重启 App 自动预填。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.3beta3",
+                    items = listOf(
+                        "极验（GeeTest v4）原生支持：服务端启用极验 captcha 时，App 在登录页和设置页书库配置自动探测 api/captcha/config，使用内置 WebView 加载 gt4.js SDK 完成拼图/滑动验证。",
+                        "验证完成后自动提交 4 个参数（lot_number、captcha_output、pass_token、gen_time）到 api/welcome / api/user/sign_in，由服务端调极验 /validate 完成最终校验。",
+                        "新组件 GeetestCaptchaView（app/src/main/java/com/talebook/app/ui/components/GeetestCaptchaView.kt）：通过 addJavascriptInterface(\"AndroidBridge\") 把极验结果回传到 Kotlin，DisposableEffect 中 destroy() 释放内存。",
+                        "HTML 容器位于 app/src/main/assets/geetest.html，按需加载极验 SDK。",
+                        "API 扩展：TalebookApi.loginWithCode / loginWithPassword 新增 4 个可选字段（极验）；AuthRepository 新增 GeetestParams 数据类；unlockSite / loginWithPassword 增加可选 geetest 参数。",
+                        "极验与 image captcha 共存：CaptchaStatus.Image 显示 PNG + 输入框，CaptchaStatus.Geetest 显示 WebView，验证完成后自动 POST 请求，不需要再点确认按钮。",
+                        "与现有登录模式完全兼容：不启用 captcha、image captcha、极验三种模式按服务端配置自动选择，cookie 按 host 隔离互不影响；多书库切换与会话持久化逻辑不变。",
+                        "已知风险：极验 SDK 依赖境外 CDN（static.geetest.com、gcaptcha4.geetest.com），国内网络下可能超时；部分国产 ROM 替换 WebView 实现可能报\"环境不安全\"。",
+                        "测试状态：当前 APK 已本地启动测试，尚未在真实极验服务端验证端到端流程。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.3beta2",
+                    items = listOf(
+                        "完整人机验证支持：客户端支持服务端图形验证码（image provider）。",
+                        "服务端启用 captcha 时，登录页与设置页书库配置会自动探测 api/captcha/config，需要时显示验证码图片 + 输入框 + 刷新按钮。",
+                        "登录前必须输入正确的验证码，验证码 cookie 由 OkHttp 持久化（2 分钟有效）。",
+                        "设置页多书库登录体验统一：每次新增/编辑书库都走完整登录流程——探测 unlockSite → 探测 login captcha → 必要时依次弹访问码对话框和登录验证码对话框。",
+                        "抽象 UnlockSiteDialog / LoginCaptchaDialog 共用组件（app/src/main/java/com/talebook/app/ui/components/CaptchaDialogs.kt），登录页与设置页复用同一套实现。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.3beta1",
+                    items = listOf(
+                        "修复 Talebook v26.9.1+ 站点访问码登录失败：客户端 api/welcome 字段名由 code 修正为服务端要求的 invite_code。",
+                        "支持 Talebook 私人模式（INVITE_MODE）：服务器配置对话框新增\"是否启用私人模式\"开关，启用后增加\"私人模式访问码\"输入项。",
+                        "登录流程会先调用 api/welcome 解锁站点，再走账号密码/访问码/访客登录。",
+                        "老用户数据兼容：LibraryServerConfig 新增字段为 nullable，老 JSON 数据反序列化不再崩溃。",
+                        "补充（人机验证支持）：服务端启用图形验证码时自动探测 api/captcha/config 并展示图片 + 输入框；失败自动刷新；兼容未启用 captcha 的服务端。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.2beta2",
+                    items = listOf(
+                        "移除应用内置的默认服务器地址：首次启动必须手动配置服务器 URL，不再自动填充任何默认地址。",
+                        "阅读时显示当前书名与章节标题：在底部进度条下方居中显示\"书名 > 章节名\"，各最多 12 字后省略号截断。",
+                        "高级设置拆分为独立开关：阅读时隐藏状态栏 / 隐藏时间 / 隐藏书名和章节 三个独立开关，默认都显示。",
+                        "字号范围 50%~300%、行距 0.5~3、页边距 0.5~3、亮度 0~100%、字间距 0~10、段间距 0~4。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.2beta",
+                    items = listOf(
+                        "朗读段落高亮：正在朗读的句子所在段落以浅蓝高亮显示，跟随朗读自动翻页。",
+                        "音频焦点处理：朗读时来电或其他应用播放音频会自动暂停，结束后自动恢复。",
+                        "朗读面板新增电池优化提示与\"电池优化设置\"按钮，解决部分机型后台无法播放的问题。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.2alpha",
+                    items = listOf(
+                        "朗读锁屏播放：开启朗读后锁屏可继续播放（后台 Foreground Service + WakeLock 实现，无通知栏控件）。",
+                        "朗读设置面板：改为从顶部滑入的浮动面板，与迷你播放条上下共存。",
+                        "朗读控制图标化：迷你播放条与设置面板的\"播放/暂停/上一句/下一句/关闭\"按钮改用标准 Material 图标。",
+                        "状态栏适配：迷你播放条与设置面板自动避让状态栏与刘海屏。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.1b",
+                    items = listOf(
+                        "修复部分 EPUB 书籍无法设置字体/字号的问题。",
+                        "改进\"强制使用出版社字体\"开关逻辑：关闭时通过 CSS !important 强制覆盖出版社的内联样式（包括字号和字体），使所有书籍的字体字号可正常调整。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.2.0",
+                    items = listOf(
+                        "移除在线阅读器，所有阅读入口统一走 Readium 本地阅读器。",
+                        "新增本地书架：通过 SAF 添加本地文件夹，不复制源文件，支持 epub / pdf / txt。",
+                        "TXT 本地阅读升级：流式转换为 EPUB、自动识别章节目录、缓存转换结果、支持 UTF-8 / UTF-16 / GB18030 / GBK。",
+                        "优化书库打开体验：主页缓存、下拉刷新、未配置服务器空态。",
+                        "软件不再强制登录，可跳过验证直接进入本地书架与设置。",
+                        "全局隐藏导航栏；阅读器默认保留状态栏，可在高级设置中强制隐藏。",
+                        "阅读器固定为沉浸式覆盖工具栏，不再提供非全屏阅读方式。",
+                        "可分开配置上下和左右页边距。",
+                        "最近阅读新增书源标记，可区分本地书和书库书。",
+                        "增加开屏画面，已登录状态不再显示登录页面。",
+                        "重做阅读器主题和背景系统，EPUB 书页层通过 Readium preferences 应用背景色与文字色。",
+                        "修复本地书进度、书签、笔记按本地书 ID 保存和读取的问题。"
+                    )
+                )
+                ChangelogSection(
+                    version = "2.1.0",
+                    items = listOf(
+                        "完善了缓存管理，增加缓存下载进度管理。",
+                        "增加了字体和背景颜色设置及预设。",
+                        "增加了笔记按书导出 md 格式。",
+                        "修复了部分书无法阅读的 bug。",
+                        "软件本身的主题颜色设置。",
+                        "重构显示方式，设计为三标签显示方式并自定义配置首页。",
+                        "增加最近阅读首页，增加编辑功能、置顶/移顶、收起分组。",
+                        "增加多书库支持。",
+                        "修复了部分书无法阅读的 bug。",
+                        "修复远程阅读大字体 EPUB 在 WebView 下出现白屏的问题，新增\"强制使用出版社字体\"开关。"
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
+}
+
+@Composable
+private fun ChangelogSection(version: String, items: List<String>) {
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = version,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    items.forEach { item ->
+        Text(
+            text = "• $item",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+        )
+    }
+}
