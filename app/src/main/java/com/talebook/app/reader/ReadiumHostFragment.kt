@@ -275,9 +275,12 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
         val currentView = view ?: return
         val session = ReadiumSessionStore.get(sessionId) ?: return
         currentView.post {
-            if (!isAdded || view == null) return@post
-            val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return@post
-            applyReaderSettings(session, nav, session.displaySettings)
+            if (!isAdded || view == null || activity == null) return@post
+            try {
+                val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return@post
+                applyReaderSettings(session, nav, session.displaySettings)
+            } catch (_: Exception) {
+            }
         }
     }
 

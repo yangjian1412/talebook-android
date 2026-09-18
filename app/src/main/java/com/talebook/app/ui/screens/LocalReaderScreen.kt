@@ -51,6 +51,10 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryStd
+import androidx.compose.material.icons.filled.Battery5Bar
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -149,6 +153,18 @@ fun LocalReaderScreen(
     val pageMarginSeparateMode by settingsRepository.readerPageMarginSeparateMode.collectAsState(initial = false)
     val systemDark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
+    var batteryLevel by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(hideStatusBarInReader) {
+        if (hideStatusBarInReader) {
+            while (true) {
+                val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as? android.os.BatteryManager
+                batteryLevel = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                kotlinx.coroutines.delay(60_000L)
+            }
+        } else {
+            batteryLevel = null
+        }
+    }
     var barsVisible by ReaderBarsController.barsVisible
     var showSearchDialog by remember { mutableStateOf(false) }
     var showBookmarksDialog by remember { mutableStateOf(false) }
@@ -586,19 +602,52 @@ fun LocalReaderScreen(
                 }
             }
 }
-            if (uiState.sessionId != null && !hideChapterPathInReader) {
-                val bookTitle = uiState.title.ifBlank { "本地阅读器" }
-                Text(
-                    text = if (bookTitle.length > 20) bookTitle.take(20) + "..." else bookTitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = currentReaderText.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            if (uiState.sessionId != null) {
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
                         .padding(top = 4.dp, start = 16.dp, end = 16.dp)
-                )
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!hideChapterPathInReader) {
+                        val bookTitle = uiState.title.ifBlank { "本地阅读器" }
+                        Text(
+                            text = if (bookTitle.length > 20) bookTitle.take(20) + "..." else bookTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = currentReaderText.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                    if (!barsVisible && hideStatusBarInReader && batteryLevel != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "${batteryLevel}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = currentReaderText.copy(alpha = 0.7f)
+                            )
+                            Icon(
+                                imageVector = when {
+                                    batteryLevel!! <= 15 -> Icons.Filled.BatteryAlert
+                                    batteryLevel!! <= 50 -> Icons.Filled.BatteryStd
+                                    batteryLevel!! <= 80 -> Icons.Filled.Battery5Bar
+                                    else -> Icons.Filled.BatteryFull
+                                },
+                                contentDescription = "电量 ${batteryLevel}%",
+                                modifier = Modifier.size(14.dp),
+                                tint = currentReaderText.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
             }
             if (uiState.ttsState.isPlaying || uiState.ttsState.isPaused) {
             FloatingTtsBar(
