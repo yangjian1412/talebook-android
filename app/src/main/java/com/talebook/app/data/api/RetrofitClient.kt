@@ -1,12 +1,20 @@
 ﻿package com.talebook.app.data.api
 
 import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonDeserializationContext
+import com.google.gson.JsonDeserializer
+import com.google.gson.JsonElement
+import com.google.gson.JsonPrimitive
+import com.talebook.app.data.model.ReadState
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import android.webkit.CookieManager
+import java.lang.reflect.Type
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
@@ -117,10 +125,54 @@ object RetrofitClient {
             val retrofit = Retrofit.Builder()
                 .baseUrl(baseUrl)
                 .client(okHttpClient)
-                .addConverterFactory(GsonConverterFactory.create())
+                .addConverterFactory(GsonConverterFactory.create(buildLenientGson()))
                 .build()
             api = retrofit.create(TalebookApi::class.java)
         }
         return api!!
+    }
+
+    /**
+     * Builds a Gson instance that tolerates server API inconsistencies.
+     * - talebook/mybooks `ReadState` returns `favorite` / `wants` as either
+     *   a JSON number (0/1, from the list endpoints) or a JSON boolean
+     *   (true/false, from the single-book endpoint). Both must be accepted.
+     * - JSON 数字 / 布尔兼容：服务端在两个端点返回不同类型，必须都接受。
+     */
+    private fun buildLenientGson(): Gson = GsonBuilder()
+        .registerTypeAdapter(ReadState::class.java, ReadStateDeserializer)
+        .setLenient()
+        .create()
+
+    private object ReadStateDeserializer : JsonDeserializer<ReadState> {
+        override fun deserialize(
+            json: JsonElement,
+            typeOfT: Type,
+            context: JsonDeserializationContext
+        ): ReadState {
+            val obj = json.asJsonObject
+            return ReadState(
+                page = obj.get("page")?.asInt ?: 0,
+                percentage = obj.get("percentage")?.asDouble ?: 0.0,
+                updated = obj.get("updated")?.asString.orEmpty(),
+                favorite = readFlagLikeInt(obj.get("favorite")),
+                wants = readFlagLikeInt(obj.get("wants")),
+                readState = obj.get("read_state")?.asInt ?: 0
+            )
+        }
+
+        private fun readFlagLikeInt(elem: JsonElement?): Int = when {
+            elem == null || elem.isJsonNull -> 0
+            elem.isJsonPrimitive -> when (val prim = elem.asJsonPrimitive) {
+                is JsonPrimitive -> when {
+                    prim.isBoolean -> if (prim.asBoolean) 1 else 0
+                    prim.isNumber -> prim.asInt.coerceIn(0, 1)
+                    prim.isString -> if (prim.asString.equals("true", ignoreCase = true) || prim.asString == "1") 1 else 0
+                    else -> 0
+                }
+                else -> 0
+            }
+            else -> 0
+        }
     }
 }

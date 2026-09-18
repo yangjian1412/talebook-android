@@ -142,6 +142,7 @@ data class ReaderDisplaySettings(
     val readerBackgroundColor: Long = 0x00000000L,
     val readerTextColor: Long = 0x00000000L,
     val customThemeEnabled: Boolean = false,
+    val twoPageMode: Boolean = false,
 )
 
 enum class ReaderFontFamily {

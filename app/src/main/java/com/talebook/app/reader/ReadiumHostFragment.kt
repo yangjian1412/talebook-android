@@ -1,5 +1,6 @@
 package com.talebook.app.reader
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -266,6 +267,17 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, PdfNavig
 
     override fun onResume() {
         super.onResume()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val currentView = view ?: return
+        val session = ReadiumSessionStore.get(sessionId) ?: return
+        currentView.post {
+            if (!isAdded || view == null) return@post
+            val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return@post
+            applyReaderSettings(session, nav, session.displaySettings)
+        }
     }
 
     override fun onResourceLoadFailed(url: Url, error: ReadError) {
@@ -579,6 +591,8 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
                 ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
             }
+            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val twoPageActive = settings.twoPageMode && isLandscape
             navigator.submitPreferences(
                 EpubPreferences(
                     backgroundColor = readiumColorOrNull(settings.readerBackgroundColor),
@@ -593,15 +607,18 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     textColor = readiumColorOrNull(settings.readerTextColor),
                 )
             )
-            injectCustomCss(navigator, settings, avoidLargePublisherFonts)
+            injectCustomCss(navigator, settings, avoidLargePublisherFonts, twoPageActive)
         }
     }
 
-    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean) {
+    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
         val css = buildString {
             append("html, body { margin: 0 !important; padding: 0 !important; }")
             if (avoidLargePublisherFonts) {
                 append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
+            }
+            if (twoPageActive) {
+                append("body { column-count: 2 !important; column-gap: 28px !important; column-fill: auto !important; }")
             }
         }
         val escaped = css.replace("'", "\\'").replace("\n", " ")

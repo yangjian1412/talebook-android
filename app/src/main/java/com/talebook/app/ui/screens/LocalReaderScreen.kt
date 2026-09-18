@@ -90,6 +90,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -1118,6 +1119,24 @@ if (showProgressJumpDialog) {
                             }
                         )
                     }
+                    val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "横屏双页显示",
+                            color = if (isLandscape) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        CompactSwitch(
+                            checked = readerSettings.twoPageMode,
+                            enabled = isLandscape,
+                            onCheckedChange = {
+                                viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = readerSettings.brightness, scrollMode = false, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn, twoPageMode = it)
+                            }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -1841,11 +1860,13 @@ private fun CompactSlider(
 @Composable
 internal fun CompactSwitch(
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
 ) {
     Switch(
         checked = checked,
         onCheckedChange = onCheckedChange,
+        enabled = enabled,
         modifier = Modifier.height(32.dp).scale(0.82f)
     )
 }

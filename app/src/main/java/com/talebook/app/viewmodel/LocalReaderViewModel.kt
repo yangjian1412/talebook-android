@@ -107,7 +107,8 @@ data class LocalReaderUiState(
         letterSpacing = 0f,
         readerBackgroundColor = 0x00000000L,
         readerTextColor = 0x00000000L,
-        customThemeEnabled = false
+        customThemeEnabled = false,
+        twoPageMode = false
     )
 )
 
@@ -269,6 +270,7 @@ class LocalReaderViewModel : ViewModel() {
                                 readerBackgroundColor = palette.background,
                                 readerTextColor = palette.text,
                                 customThemeEnabled = true,
+                                twoPageMode = settingsRepository.readerTwoPageMode.first(),
                             )
                             val ttsSettings = ReaderTtsState(
                                 speechRate = settingsRepository.ttsSpeechRate.first(),
@@ -555,6 +557,7 @@ class LocalReaderViewModel : ViewModel() {
             readerBackgroundColor = palette.background,
             readerTextColor = palette.text,
             customThemeEnabled = true,
+            twoPageMode = settingsRepository.readerTwoPageMode.first(),
         )
     }
 
@@ -875,6 +878,7 @@ private suspend fun openReadiumSession(
         readerBackgroundColor: Long = _uiState.value.readerSettings.readerBackgroundColor,
         readerTextColor: Long = _uiState.value.readerSettings.readerTextColor,
         customThemeEnabled: Boolean = _uiState.value.readerSettings.customThemeEnabled,
+        twoPageMode: Boolean = _uiState.value.readerSettings.twoPageMode,
         appDark: Boolean = _uiState.value.readerSettings.appDark,
     ) {
         val settings = ReaderDisplaySettings(
@@ -905,6 +909,7 @@ private suspend fun openReadiumSession(
             readerBackgroundColor = readerBackgroundColor and 0xFFFFFFFFL,
             readerTextColor = readerTextColor and 0xFFFFFFFFL,
             customThemeEnabled = customThemeEnabled,
+            twoPageMode = twoPageMode,
         )
         val previous = _uiState.value.readerSettings
         _uiState.update { it.copy(readerSettings = settings) }
@@ -943,7 +948,8 @@ private suspend fun openReadiumSession(
                 forceTapAnimation = settings.forceTapAnimation,
                 scrollTapPageTurn = settings.scrollTapPageTurn,
                 scrollKeepLine = settings.scrollKeepLine,
-                volumeKeyPageTurn = settings.volumeKeyPageTurn
+                volumeKeyPageTurn = settings.volumeKeyPageTurn,
+                twoPageMode = settings.twoPageMode
             )
             repo.saveReaderCustomColors(settings.readerBackgroundColor, settings.readerTextColor, settings.customThemeEnabled)
         }

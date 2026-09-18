@@ -156,11 +156,11 @@ class TalebookAdapter : ServerAdapter {
     override suspend fun getReadState(bookId: Int): Result<ReadState> = runCatching {
         val resp = api.getReadState(bookId)
         val b = resp.body()
+        val s = b?.book?.state
         ReadState(
-            favorite = b?.book?.state?.favorite == true,
-            shelf = b?.book?.state?.shelf == true,
-            wants = b?.book?.state?.wants == true,
-            readState = b?.book?.state?.readState ?: 0
+            favorite = s?.favorite ?: 0,
+            wants = s?.wants ?: 0,
+            readState = s?.readState ?: 0
         )
     }
 

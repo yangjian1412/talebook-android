@@ -78,9 +78,8 @@ data class ReadState(
     @SerializedName("page") val page: Int = 0,
     @SerializedName("percentage") val percentage: Double = 0.0,
     @SerializedName("updated") val updated: String = "",
-    @SerializedName("favorite") val favorite: Boolean = false,
-    @SerializedName("shelf") val shelf: Boolean = false,
-    @SerializedName("wants") val wants: Boolean = false,
+    @SerializedName("favorite") val favorite: Int = 0,
+    @SerializedName("wants") val wants: Int = 0,
     @SerializedName("read_state") val readState: Int = 0
 )
 

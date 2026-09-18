@@ -100,6 +100,7 @@ class SettingsRepository(private val context: Context) {
         private val READER_SCROLL_KEEP_LINE_KEY = booleanPreferencesKey("reader_scroll_keep_line")
         private val READER_VOLUME_KEY_PAGE_TURN_KEY = booleanPreferencesKey("reader_volume_key_page_turn")
         private val READER_FORCE_TAP_ANIMATION_KEY = booleanPreferencesKey("reader_force_tap_animation")
+        private val READER_TWO_PAGE_MODE_KEY = booleanPreferencesKey("reader_two_page_mode")
         private val READER_BACKGROUND_COLOR_KEY = stringPreferencesKey("reader_background_color")
         private val READER_TEXT_COLOR_KEY = stringPreferencesKey("reader_text_color")
         private val READER_CUSTOM_THEME_ENABLED_KEY = booleanPreferencesKey("reader_custom_theme_enabled")
@@ -369,6 +370,10 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val readerVolumeKeyPageTurn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_VOLUME_KEY_PAGE_TURN_KEY] ?: false
+    }
+
+    val readerTwoPageMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[READER_TWO_PAGE_MODE_KEY] ?: false
     }
 
     val ttsSpeechRate: Flow<Float> = context.dataStore.data.map { prefs ->
@@ -750,7 +755,8 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         scrollTapPageTurn: ReaderScrollTapSpeed,
         scrollKeepLine: Boolean,
         volumeKeyPageTurn: Boolean,
-        forceTapAnimation: Boolean
+        forceTapAnimation: Boolean,
+        twoPageMode: Boolean
     ) {
         val horizontal = pageMarginHorizontal.coerceIn(0.5f, 3.0f)
         val vertical = pageMarginVertical.coerceIn(0.5f, 3.0f)
@@ -796,6 +802,7 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
             prefs[READER_SCROLL_KEEP_LINE_KEY] = scrollKeepLine
             prefs[READER_VOLUME_KEY_PAGE_TURN_KEY] = volumeKeyPageTurn
             prefs[READER_FORCE_TAP_ANIMATION_KEY] = forceTapAnimation
+            prefs[READER_TWO_PAGE_MODE_KEY] = twoPageMode
         }
     }
 
