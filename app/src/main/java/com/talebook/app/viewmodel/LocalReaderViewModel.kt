@@ -897,7 +897,7 @@ private suspend fun openReadiumSession(
             pageMarginVertical = pageMarginVertical.coerceIn(0.5f, 2.0f),
             pageMarginSeparateMode = pageMarginSeparateMode,
             paragraphSpacing = paragraphSpacing.coerceIn(0f, 2f),
-            letterSpacing = letterSpacing.coerceIn(-0.5f, 1f),
+            letterSpacing = letterSpacing.coerceIn(-0.2f, 1f),
             publisherStyles = publisherStyles,
             forcePublisherFonts = forcePublisherFonts,
             keepScreenOn = keepScreenOn,
@@ -1364,11 +1364,6 @@ private fun String.toReaderFontFamily(): ReaderFontFamily = when (this) {
     "serif" -> ReaderFontFamily.SERIF
     "sans_serif" -> ReaderFontFamily.SANS_SERIF
     "monospace" -> ReaderFontFamily.MONOSPACE
-    "kai" -> ReaderFontFamily.KAI
-    "song" -> ReaderFontFamily.SONG
-    "xingkai" -> ReaderFontFamily.XINGKAI
-    "heiti" -> ReaderFontFamily.HEITI
-    "youyuan" -> ReaderFontFamily.YOUYUAN
     else -> ReaderFontFamily.DEFAULT
 }
 
@@ -1377,11 +1372,6 @@ private fun ReaderFontFamily.toStorageValue(): String = when (this) {
     ReaderFontFamily.SERIF -> "serif"
     ReaderFontFamily.SANS_SERIF -> "sans_serif"
     ReaderFontFamily.MONOSPACE -> "monospace"
-    ReaderFontFamily.KAI -> "kai"
-    ReaderFontFamily.SONG -> "song"
-    ReaderFontFamily.XINGKAI -> "xingkai"
-    ReaderFontFamily.HEITI -> "heiti"
-    ReaderFontFamily.YOUYUAN -> "youyuan"
 }
 
 private fun String.toReaderPageAnimation(): ReaderPageAnimation = when (this) {

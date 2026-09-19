@@ -1060,11 +1060,10 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                 ChangelogSection(
                     version = "2.3.0",
                     items = listOf(
-                        "阅读设置新增5种内置中文字体：楷体、宋体、行楷、黑体、幼圆。",
-                        "字体选择已扩充为9种：默认、衬线、无衬线、等宽、楷体、宋体、行楷、黑体、幼圆。",
-                        "字体文件来自开源项目（霞鹜文楷 GB Lite、霞鹜新致宋、霞鹜新晰黑、演示夏行楷、文源圆体），采用 OFL-1.1 / 免费商用授权。",
-                        "字体已裁剪到 GB2312 字符集（含常用扩展），减小安装包体积。",
-                        "通过 WebView @font-face 注入方式加载本地 assets 字体，无需额外依赖。"
+                        "阅读器字体选择改为4种：默认、宋体（serif）、黑体（sans-serif）、等宽（monospace）。",
+                        "修复字间距、行间距、段间距设置不生效的问题。",
+                        "修复跳转进度后页面布局不刷新的问题。",
+                        "移除字体版权对话框。"
                     )
                 )
                 ChangelogSection(

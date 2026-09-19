@@ -212,7 +212,6 @@ fun LocalReaderScreen(
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
     var showCustomThemeDialog by remember { mutableStateOf(false) }
     var showPageMarginDialog by remember { mutableStateOf(false) }
-    var showFontLicenseDialog by remember { mutableStateOf(false) }
     var previewBackground by remember(customBackground) { mutableStateOf(customBackground) }
     var previewText by remember(customText) { mutableStateOf(customText) }
     var showProgressJumpDialog by remember { mutableStateOf(false) }
@@ -1005,13 +1004,7 @@ if (showProgressJumpDialog) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("字体")
-                            TextButton(
-                                onClick = { showFontLicenseDialog = true },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) { Text("版权", style = MaterialTheme.typography.labelSmall) }
-                        }
+                        Text("字体")
                     }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1022,20 +1015,14 @@ if (showProgressJumpDialog) {
                         ReaderOptionChip("默认", readerSettings.fontFamily == ReaderFontFamily.DEFAULT) {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.DEFAULT)
                         }
-                        ReaderOptionChip("楷体", readerSettings.fontFamily == ReaderFontFamily.KAI) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.KAI)
+                        ReaderOptionChip("宋体", readerSettings.fontFamily == ReaderFontFamily.SERIF) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SERIF)
                         }
-                        ReaderOptionChip("宋体", readerSettings.fontFamily == ReaderFontFamily.SONG) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SONG)
+                        ReaderOptionChip("黑体", readerSettings.fontFamily == ReaderFontFamily.SANS_SERIF) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SANS_SERIF)
                         }
-                        ReaderOptionChip("行楷", readerSettings.fontFamily == ReaderFontFamily.XINGKAI) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.XINGKAI)
-                        }
-                        ReaderOptionChip("黑体", readerSettings.fontFamily == ReaderFontFamily.HEITI) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.HEITI)
-                        }
-                        ReaderOptionChip("幼圆", readerSettings.fontFamily == ReaderFontFamily.YOUYUAN) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.YOUYUAN)
+                        ReaderOptionChip("等宽", readerSettings.fontFamily == ReaderFontFamily.MONOSPACE) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.MONOSPACE)
                         }
                     }
                     Row(
@@ -1384,7 +1371,7 @@ if (showProgressJumpDialog) {
                         onValueChange = {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, letterSpacing = it)
                         },
-                        valueRange = -0.5f..1f
+                        valueRange = -0.2f..1f
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1616,61 +1603,6 @@ if (showProgressJumpDialog) {
             }
         )
     }
-
-    if (showFontLicenseDialog) {
-        AlertDialog(
-            onDismissRequest = { showFontLicenseDialog = false },
-            title = { Text("内置字体授权") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text("本 App 内置 5 种中文字体，均来自开源项目，遵循各自的开源许可证：")
-                    FontLicenseItem(
-                        name = "霞鹜文楷 GB 轻便版",
-                        style = "楷体",
-                        license = "SIL Open Font License 1.1",
-                        source = "github.com/lxgw/LxgwWenkaiGB-Lite"
-                    )
-                    FontLicenseItem(
-                        name = "霞鹜新致宋",
-                        style = "宋体",
-                        license = "SIL Open Font License 1.1",
-                        source = "github.com/lxgw/LxgwNeoZhiSong"
-                    )
-                    FontLicenseItem(
-                        name = "演示夏行楷",
-                        style = "行楷",
-                        license = "免费商用",
-                        source = "github.com/wordshub/free-font"
-                    )
-                    FontLicenseItem(
-                        name = "霞鹜新晰黑",
-                        style = "黑体",
-                        license = "SIL Open Font License 1.1",
-                        source = "github.com/lxgw/LxgwNeoXiHei"
-                    )
-                    FontLicenseItem(
-                        name = "文源圆体 (WenYuan Rounded)",
-                        style = "幼圆",
-                        license = "SIL Open Font License 1.1",
-                        source = "github.com/takushun-wu/WenYuanFonts"
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "字体文件已裁剪到 GB2312 字符集及常用扩展，减小安装包体积。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showFontLicenseDialog = false }) { Text("关闭") }
-            }
-        )
-    }
-
-    
 
     if (showTocDialog) {
         AlertDialog(
@@ -2142,17 +2074,6 @@ private fun hsvToRgb(hue: Float, saturation: Float, value: Float): Long {
 }
 
 @Composable
-private fun FontLicenseItem(name: String, style: String, license: String, source: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(style, style = MaterialTheme.typography.titleMedium)
-            Text(name, style = MaterialTheme.typography.bodyMedium)
-        }
-        Text("授权: $license", style = MaterialTheme.typography.bodySmall)
-        Text("来源: $source", style = MaterialTheme.typography.bodySmall)
-    }
-}
-
 private fun batteryIcon(level: Int, charging: Boolean): androidx.compose.ui.graphics.vector.ImageVector {
     return when {
         charging -> Icons.Filled.BatteryChargingFull

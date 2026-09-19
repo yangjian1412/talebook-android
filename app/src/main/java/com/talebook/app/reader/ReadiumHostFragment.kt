@@ -621,12 +621,6 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
                 ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
                 ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
-                // 自定义中文字体：传 null 让我们的 @font-face CSS 生效
-                ReaderFontFamily.KAI -> null
-                ReaderFontFamily.SONG -> null
-                ReaderFontFamily.XINGKAI -> null
-                ReaderFontFamily.HEITI -> null
-                ReaderFontFamily.YOUYUAN -> null
             }
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = settings.twoPageMode && isLandscape
@@ -635,10 +629,8 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     backgroundColor = readiumColorOrNull(settings.readerBackgroundColor),
                     fontFamily = readiumFontFamily,
                     fontSize = settings.fontScale.toDouble(),
-                    letterSpacing = settings.letterSpacing.toDouble(),
                     lineHeight = settings.lineHeight.toDouble(),
                     pageMargins = settings.pageMargins.toDouble(),
-                    paragraphSpacing = settings.paragraphSpacing.toDouble(),
                     publisherStyles = settings.publisherStyles,
                     scroll = settings.scrollMode,
                     textColor = readiumColorOrNull(settings.readerTextColor),
@@ -649,75 +641,44 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
     }
 
     private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
-        val fontFamilyValue = when (settings.fontFamily) {
-            ReaderFontFamily.KAI -> "'TalebookKai', serif"
-            ReaderFontFamily.SONG -> "'TalebookSong', serif"
-            ReaderFontFamily.XINGKAI -> "'TalebookXingkai', serif"
-            ReaderFontFamily.HEITI -> "'TalebookHeiti', sans-serif"
-            ReaderFontFamily.YOUYUAN -> "'TalebookYouyuan', sans-serif"
-            else -> publisherFontFamilyCss(settings.fontFamily)
-        }
         val twoPageCss = if (twoPageActive) {
             "document.body.style.columnCount='2';document.body.style.webkitColumnCount='2';document.body.style.columnGap='24px';document.body.style.webkitColumnGap='24px';document.body.style.maxWidth='none';document.body.style.width='auto';"
         } else {
             "document.body.style.columnCount='';document.body.style.webkitColumnCount='';document.body.style.columnGap='';document.body.style.webkitColumnGap='';document.body.style.maxWidth='';document.body.style.width='';"
         }
 
-        val script = buildString {
-            append("(function() { ")
-            // 移除旧的
-            append("var old = document.getElementById('talebook-reader-font-css'); if (old) old.remove(); ")
-            // 设置基础字体族
-            append("var fontValue = '")
-            append(cssFontFamily(settings.fontFamily))
-            append("'; ")
-            // 直接对所有元素设置 inline style（最高优先级）
-            append("function applyFont(el) { ")
-            append("  if (!el || el.nodeType !== 1) return; ")
-            append("  el.style.setProperty('font-family', fontValue, 'important'); ")
-            append("} ")
-            append("function walkAndApply(el) { ")
-            append("  if (!el) return; ")
-            append("  if (el.nodeType === 1) applyFont(el); ")
-            append("  var children = el.childNodes; ")
-            append("  for (var i = 0; i < children.length; i++) walkAndApply(children[i]); ")
-            append("} ")
-            append("walkAndApply(document.body); ")
-            // 直接对 body 和 documentElement 也设置一遍
-            append("document.body.style.setProperty('font-family', fontValue, 'important'); ")
-            append("document.documentElement.style.setProperty('font-family', fontValue, 'important'); ")
-            // 横屏双页
-            append(twoPageCss)
-            append("})();")
+        val cssParts = StringBuilder()
+        cssParts.append(twoPageCss)
+
+        if (settings.letterSpacing != 0f) {
+            val ls = String.format(java.util.Locale.US, "%.2f", settings.letterSpacing)
+            cssParts.append("var _els=document.querySelectorAll('p,div,span,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,dd,dt,figcaption,caption,address');for(var i=0;i<_els.length;i++){_els[i].style.letterSpacing='${ls}em';}document.body.style.letterSpacing='${ls}em';")
+        } else {
+            cssParts.append("var _els=document.querySelectorAll('p,div,span,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,dd,dt,figcaption,caption,address');for(var i=0;i<_els.length;i++){_els[i].style.removeProperty('letter-spacing');}document.body.style.removeProperty('letter-spacing');")
+        }
+
+        if (settings.lineHeight != 1.5f) {
+            val lh = String.format(java.util.Locale.US, "%.2f", settings.lineHeight)
+            cssParts.append("document.body.style.lineHeight='$lh';")
+        } else {
+            cssParts.append("document.body.style.removeProperty('line-height');")
+        }
+
+        if (settings.paragraphSpacing != 1.0f) {
+            val ps = String.format(java.util.Locale.US, "%.2f", settings.paragraphSpacing)
+            cssParts.append("var _ps=document.querySelectorAll('p');for(var i=0;i<_ps.length;i++){_ps[i].style.marginBottom='${ps}em';}")
+        } else {
+            cssParts.append("var _ps=document.querySelectorAll('p');for(var i=0;i<_ps.length;i++){_ps[i].style.removeProperty('margin-bottom');}")
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
+                val script = "(function() {${cssParts}})();"
                 navigator.evaluateJavascript(script)
             }.onFailure { error ->
-                Log.w("TaleReadium", "Custom CSS injection skipped: \${error.message}")
+                Log.w("TaleReadium", "Custom CSS injection skipped: " + error.message)
             }
         }
-    }
-
-    private fun cssFontFamily(fontFamily: ReaderFontFamily): String = when (fontFamily) {
-        ReaderFontFamily.KAI -> "'TalebookKai', serif"
-        ReaderFontFamily.SONG -> "'TalebookSong', serif"
-        ReaderFontFamily.XINGKAI -> "'TalebookXingkai', serif"
-        ReaderFontFamily.HEITI -> "'TalebookHeiti', sans-serif"
-        ReaderFontFamily.YOUYUAN -> "'TalebookYouyuan', sans-serif"
-        else -> publisherFontFamilyCss(fontFamily)
-    }
-    private fun publisherFontFamilyCss(fontFamily: ReaderFontFamily): String = when (fontFamily) {
-        ReaderFontFamily.SERIF -> "serif"
-        ReaderFontFamily.MONOSPACE -> "monospace"
-        ReaderFontFamily.KAI -> "'TalebookKai', serif"
-        ReaderFontFamily.SONG -> "'TalebookSong', serif"
-        ReaderFontFamily.XINGKAI -> "'TalebookXingkai', serif"
-        ReaderFontFamily.HEITI -> "'TalebookHeiti', sans-serif"
-        ReaderFontFamily.YOUYUAN -> "'TalebookYouyuan', sans-serif"
-        ReaderFontFamily.DEFAULT,
-        ReaderFontFamily.SANS_SERIF -> "sans-serif"
     }
 
     private fun readiumColorOrNull(rgb: Long): ReadiumColor? {

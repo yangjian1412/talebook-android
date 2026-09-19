@@ -149,12 +149,7 @@ enum class ReaderFontFamily {
     DEFAULT,
     SERIF,
     SANS_SERIF,
-    MONOSPACE,
-    KAI,
-    SONG,
-    XINGKAI,
-    HEITI,
-    YOUYUAN
+    MONOSPACE
 }
 
 enum class ReaderTheme {
