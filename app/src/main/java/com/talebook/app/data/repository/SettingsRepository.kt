@@ -763,7 +763,8 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         context.dataStore.edit { prefs ->
             prefs[READER_FONT_SCALE_KEY] = fontScale.coerceIn(0.5f, 3.0f)
             prefs[READER_FONT_FAMILY_KEY] = when (fontFamily) {
-                "default", "serif", "sans_serif", "monospace" -> fontFamily
+                "default", "serif", "sans_serif", "monospace",
+                "kai", "song", "xingkai", "heiti", "youyuan" -> fontFamily
                 else -> "default"
             }
             prefs[READER_LINE_HEIGHT_KEY] = lineHeight.coerceIn(0.5f, 3.0f)

@@ -683,7 +683,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.3.0beta2",
+                text = "Tale Book v2.3.0",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -1057,6 +1057,16 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                ChangelogSection(
+                    version = "2.3.0",
+                    items = listOf(
+                        "阅读设置新增5种内置中文字体：楷体、宋体、行楷、黑体、幼圆。",
+                        "字体选择已扩充为9种：默认、衬线、无衬线、等宽、楷体、宋体、行楷、黑体、幼圆。",
+                        "字体文件来自开源项目（霞鹜文楷 GB Lite、霞鹜新致宋、霞鹜新晰黑、演示夏行楷、文源圆体），采用 OFL-1.1 / 免费商用授权。",
+                        "字体已裁剪到 GB2312 字符集（含常用扩展），减小安装包体积。",
+                        "通过 WebView @font-face 注入方式加载本地 assets 字体，无需额外依赖。"
+                    )
+                )
                 ChangelogSection(
                     version = "2.3.0alpha",
                     items = listOf(

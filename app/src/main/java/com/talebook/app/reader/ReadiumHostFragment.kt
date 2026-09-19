@@ -309,6 +309,8 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             val twoPageActive = session.displaySettings.twoPageMode && isLandscape
             injectCustomCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
         }
+        // 跳转/翻页后重新计算 WebView 布局，避免显示不全
+        view?.let { stabilizeInitialLayout(it) }
     }
 
 private suspend fun saveProgress(bookId: Int, locator: Locator) {
@@ -512,8 +514,20 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
 
     private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progress: Double) {
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
-        val index = (progress.coerceIn(0.0, 1.0) * (links.size - 1)).toInt().coerceIn(0, links.lastIndex)
-        navigator.go(links[index])
+        val clampedProgress = progress.coerceIn(0.0, 1.0)
+        // 用 progress * size 而非 * (size - 1)，确保 100% 能跳到最后一章
+        val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
+        val targetLink = links[index]
+        // 使用 totalProgression 而不是 progression，让 Readium 按全书进度精确跳转
+        val mediaType = targetLink.mediaType?.toString() ?: "application/xhtml+xml"
+        val hrefStr = targetLink.href.toString().replace("\"", "\\\"")
+        val locatorJson = """
+            {"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":$clampedProgress}}
+        """.trimIndent()
+        runCatching { Locator.fromJSON(JSONObject(locatorJson)) }
+            .getOrNull()
+            ?.let { navigator.go(it) }
+            ?: navigator.go(targetLink)
     }
 
     private fun goToPage(readingOrder: List<Link>, navigator: Navigator, page: Int) {
@@ -607,6 +621,12 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
                 ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
                 ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
+                // 自定义中文字体：传 null 让我们的 @font-face CSS 生效
+                ReaderFontFamily.KAI -> null
+                ReaderFontFamily.SONG -> null
+                ReaderFontFamily.XINGKAI -> null
+                ReaderFontFamily.HEITI -> null
+                ReaderFontFamily.YOUYUAN -> null
             }
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = settings.twoPageMode && isLandscape
@@ -615,7 +635,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     backgroundColor = readiumColorOrNull(settings.readerBackgroundColor),
                     fontFamily = readiumFontFamily,
                     fontSize = settings.fontScale.toDouble(),
-                    letterSpacing = settings.letterSpacing.takeIf { it > 0f }?.toDouble(),
+                    letterSpacing = settings.letterSpacing.toDouble(),
                     lineHeight = settings.lineHeight.toDouble(),
                     pageMargins = settings.pageMargins.toDouble(),
                     paragraphSpacing = settings.paragraphSpacing.toDouble(),
@@ -629,30 +649,128 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
     }
 
     private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
-        val css = buildString {
-            append("html, body { margin: 0 !important; padding: 0 !important; }")
-            if (avoidLargePublisherFonts) {
-                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
-            }
-            if (twoPageActive) {
-                append("body { -webkit-column-count: 2 !important; column-count: 2 !important; column-width: auto !important; column-gap: 24px !important; column-fill: balance !important; max-width: none !important; width: auto !important; }")
-            }
+        val customFont = customFontFaceCss(settings.fontFamily)
+        val fontFamilyValue = if (customFont != null) customFontFamilyValue(settings.fontFamily)
+                             else publisherFontFamilyCss(settings.fontFamily)
+        // 构造 JS：完全用 inline style + @font-face，避免被 EPUB 自己的 CSS 覆盖
+        val cssFontFace = customFont ?: ""
+        val twoPageCss = if (twoPageActive) {
+            "document.body.style.columnCount='2';document.body.style.webkitColumnCount='2';document.body.style.columnGap='24px';document.body.style.webkitColumnGap='24px';document.body.style.maxWidth='none';document.body.style.width='auto';"
+        } else {
+            "document.body.style.columnCount='';document.body.style.webkitColumnCount='';document.body.style.columnGap='';document.body.style.webkitColumnGap='';document.body.style.maxWidth='';document.body.style.width='';"
         }
-        val escaped = css.replace("'", "\\'").replace("\n", " ")
+        // 转义 fontFamilyValue 用于 JS 字符串
+        val jsFontFamily = fontFamilyValue.replace("\\", "\\\\").replace("'", "\\'")
+        val jsFontFace = cssFontFace.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+
+        val script = buildString {
+            append("(function() { ")
+            // 先移除旧的
+            append("var old = document.getElementById('talebook-reader-font-css'); if (old) old.remove(); ")
+            // 创建 @font-face 和强制覆盖的 CSS
+            append("var s = document.createElement('style'); s.id = 'talebook-reader-font-css'; ")
+            append("s.textContent = '")
+            append(jsFontFace)
+            append(" html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ")
+            append(jsFontFamily)
+            append(" !important; } ")
+            append("'; document.head.appendChild(s); ")
+            // 用 inline style 在 :root 上设置 CSS 变量（Readium 的 CSS 用 var(--RS__xxx)）
+            append("var r = document.documentElement; r.style.setProperty('--RS__baseFontFamily', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__oldStyleTf', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__modernTf', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__sansTf', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__humanistTf', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__compFontFamily', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__codeFontFamily', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            append("r.style.setProperty('--RS__monospaceTf', '")
+            append(jsFontFamily)
+            append("', 'important'); ")
+            // 关键：用 walkTree 遍历所有元素设置 inline style font-family（最强覆盖）
+            // 这会覆盖 EPUB 内部的 <font face> 和其他设置
+            append("var fontValue = '")
+            append(jsFontFamily)
+            append("'; ")
+            append("function walkAndApply(el) { ")
+            append("  if (!el) return; ")
+            append("  if (el.nodeType === 1) { el.style.setProperty('font-family', fontValue, 'important'); } ")
+            append("  var children = el.childNodes; ")
+            append("  for (var i = 0; i < children.length; i++) walkAndApply(children[i]); ")
+            append("} ")
+            append("walkAndApply(document.body); ")
+            // 直接对 body 和 documentElement 也设置一遍
+            append("document.body.style.setProperty('font-family', fontValue, 'important'); ")
+            append("document.documentElement.style.setProperty('font-family', fontValue, 'important'); ")
+            // 横屏双页
+            append(twoPageCss)
+            append("})();")
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
-                navigator.evaluateJavascript(
-                    "(function() { var old = document.getElementById('talebook-reader-custom-css'); if (old) old.remove(); var s = document.createElement('style'); s.id = 'talebook-reader-custom-css'; s.type = 'text/css'; s.innerHTML = '$escaped'; (document.head || document.documentElement).appendChild(s); })();"
-                )
+                navigator.evaluateJavascript(script)
+                // 异步检查字体是否真的加载了
+                kotlinx.coroutines.delay(500)
+                val fontCheck = """
+                    (function() {
+                        var ff = '$jsFontFamily'.split(',')[0].replace(/['"]/g, '').trim();
+                        var loaded = false;
+                        if (document.fonts) {
+                            document.fonts.forEach(function(f) {
+                                if (f.family === ff) loaded = loaded || (f.status === 'loaded');
+                            });
+                        }
+                        return 'font=' + ff + ' loaded=' + loaded + ' body_font=' + getComputedStyle(document.body).fontFamily;
+                    })()
+                """.trimIndent()
+                val result = navigator.evaluateJavascript(fontCheck)
+                android.util.Log.d("TaleReadium", "Font check: $result")
             }.onFailure { error ->
                 Log.w("TaleReadium", "Custom CSS injection skipped: ${error.message}")
             }
         }
     }
 
+    private fun customFontFamilyValue(fontFamily: ReaderFontFamily): String = when (fontFamily) {
+        ReaderFontFamily.KAI -> "'TalebookKai', serif"
+        ReaderFontFamily.SONG -> "'TalebookSong', serif"
+        ReaderFontFamily.XINGKAI -> "'TalebookXingkai', serif"
+        ReaderFontFamily.HEITI -> "'TalebookHeiti', sans-serif"
+        ReaderFontFamily.YOUYUAN -> "'TalebookYouyuan', sans-serif"
+        else -> "serif"
+    }
+
+    private fun customFontFaceCss(fontFamily: ReaderFontFamily): String? = when (fontFamily) {
+        ReaderFontFamily.KAI -> "@font-face { font-family: 'TalebookKai'; src: url('https://appassets.androidplatform.net/assets/fonts/wenkai.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }"
+        ReaderFontFamily.SONG -> "@font-face { font-family: 'TalebookSong'; src: url('https://appassets.androidplatform.net/assets/fonts/song.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }"
+        ReaderFontFamily.XINGKAI -> "@font-face { font-family: 'TalebookXingkai'; src: url('https://appassets.androidplatform.net/assets/fonts/xingkai.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }"
+        ReaderFontFamily.HEITI -> "@font-face { font-family: 'TalebookHeiti'; src: url('https://appassets.androidplatform.net/assets/fonts/heiti.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }"
+        ReaderFontFamily.YOUYUAN -> "@font-face { font-family: 'TalebookYouyuan'; src: url('https://appassets.androidplatform.net/assets/fonts/youyuan.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }"
+        else -> null
+    }
+
     private fun publisherFontFamilyCss(fontFamily: ReaderFontFamily): String = when (fontFamily) {
         ReaderFontFamily.SERIF -> "serif"
         ReaderFontFamily.MONOSPACE -> "monospace"
+        ReaderFontFamily.KAI -> "'TalebookKai', serif"
+        ReaderFontFamily.SONG -> "'TalebookSong', serif"
+        ReaderFontFamily.XINGKAI -> "'TalebookXingkai', serif"
+        ReaderFontFamily.HEITI -> "'TalebookHeiti', sans-serif"
+        ReaderFontFamily.YOUYUAN -> "'TalebookYouyuan', sans-serif"
         ReaderFontFamily.DEFAULT,
         ReaderFontFamily.SANS_SERIF -> "sans-serif"
     }

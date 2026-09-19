@@ -4,6 +4,7 @@ import com.talebook.app.MainActivity
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -53,8 +54,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryStd
+import androidx.compose.material.icons.filled.Battery2Bar
+import androidx.compose.material.icons.filled.Battery3Bar
+import androidx.compose.material.icons.filled.Battery4Bar
 import androidx.compose.material.icons.filled.Battery5Bar
+import androidx.compose.material.icons.filled.Battery6Bar
 import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -154,15 +160,43 @@ fun LocalReaderScreen(
     val systemDark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
     var batteryLevel by remember { mutableStateOf<Int?>(null) }
-    LaunchedEffect(hideStatusBarInReader) {
+    var batteryCharging by remember { mutableStateOf<Boolean?>(null) }
+    androidx.compose.runtime.DisposableEffect(hideStatusBarInReader) {
         if (hideStatusBarInReader) {
-            while (true) {
-                val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as? android.os.BatteryManager
-                batteryLevel = bm?.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                kotlinx.coroutines.delay(60_000L)
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
+                    when (intent?.action) {
+                        android.content.Intent.ACTION_BATTERY_CHANGED -> {
+                            val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                            val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+                            if (level >= 0 && scale > 0) {
+                                batteryLevel = level * 100 / scale
+                            }
+                            val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+                            batteryCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                                    status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                        }
+                        android.content.Intent.ACTION_POWER_CONNECTED -> batteryCharging = true
+                        android.content.Intent.ACTION_POWER_DISCONNECTED -> batteryCharging = false
+                    }
+                }
+            }
+            val filter = android.content.IntentFilter().apply {
+                addAction(android.content.Intent.ACTION_BATTERY_CHANGED)
+                addAction(android.content.Intent.ACTION_POWER_CONNECTED)
+                addAction(android.content.Intent.ACTION_POWER_DISCONNECTED)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                context.registerReceiver(receiver, filter)
+            }
+            onDispose {
+                try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
             }
         } else {
-            batteryLevel = null
+            onDispose { }
         }
     }
     var barsVisible by ReaderBarsController.barsVisible
@@ -178,6 +212,7 @@ fun LocalReaderScreen(
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
     var showCustomThemeDialog by remember { mutableStateOf(false) }
     var showPageMarginDialog by remember { mutableStateOf(false) }
+    var showFontLicenseDialog by remember { mutableStateOf(false) }
     var previewBackground by remember(customBackground) { mutableStateOf(customBackground) }
     var previewText by remember(customText) { mutableStateOf(customText) }
     var showProgressJumpDialog by remember { mutableStateOf(false) }
@@ -635,13 +670,8 @@ fun LocalReaderScreen(
                                 color = currentReaderText.copy(alpha = 0.7f)
                             )
                             Icon(
-                                imageVector = when {
-                                    batteryLevel!! <= 15 -> Icons.Filled.BatteryAlert
-                                    batteryLevel!! <= 50 -> Icons.Filled.BatteryStd
-                                    batteryLevel!! <= 80 -> Icons.Filled.Battery5Bar
-                                    else -> Icons.Filled.BatteryFull
-                                },
-                                contentDescription = "电量 ${batteryLevel}%",
+                                imageVector = batteryIcon(batteryLevel!!, batteryCharging == true),
+                                contentDescription = if (batteryCharging == true) "充电中 ${batteryLevel}%" else "电量 ${batteryLevel}%",
                                 modifier = Modifier.size(14.dp),
                                 tint = currentReaderText.copy(alpha = 0.7f)
                             )
@@ -975,6 +1005,44 @@ if (showProgressJumpDialog) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("字体")
+                            TextButton(
+                                onClick = { showFontLicenseDialog = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("版权", style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                    ) {
+                        ReaderOptionChip("默认", readerSettings.fontFamily == ReaderFontFamily.DEFAULT) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.DEFAULT)
+                        }
+                        ReaderOptionChip("楷体", readerSettings.fontFamily == ReaderFontFamily.KAI) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.KAI)
+                        }
+                        ReaderOptionChip("宋体", readerSettings.fontFamily == ReaderFontFamily.SONG) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SONG)
+                        }
+                        ReaderOptionChip("行楷", readerSettings.fontFamily == ReaderFontFamily.XINGKAI) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.XINGKAI)
+                        }
+                        ReaderOptionChip("黑体", readerSettings.fontFamily == ReaderFontFamily.HEITI) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.HEITI)
+                        }
+                        ReaderOptionChip("幼圆", readerSettings.fontFamily == ReaderFontFamily.YOUYUAN) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.YOUYUAN)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("字号 ${(readerSettings.fontScale * 100).toInt()}%")
                         TextButton(
                             onClick = {
@@ -1168,24 +1236,6 @@ if (showProgressJumpDialog) {
                             }
                         )
                     }
-                    val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "横屏双页显示",
-                            color = if (isLandscape) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                        CompactSwitch(
-                            checked = readerSettings.twoPageMode,
-                            enabled = isLandscape,
-                            onCheckedChange = {
-                                viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = readerSettings.brightness, scrollMode = false, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn, twoPageMode = it)
-                            }
-                        )
-                    }
                 }
             },
             confirmButton = {
@@ -1317,21 +1367,6 @@ if (showProgressJumpDialog) {
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
-                    Text("字体")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        ReaderOptionChip("默认", readerSettings.fontFamily == ReaderFontFamily.DEFAULT) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.DEFAULT)
-                        }
-                        ReaderOptionChip("衬线", readerSettings.fontFamily == ReaderFontFamily.SERIF) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SERIF)
-                        }
-                        ReaderOptionChip("无衬线", readerSettings.fontFamily == ReaderFontFamily.SANS_SERIF) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SANS_SERIF)
-                        }
-                        ReaderOptionChip("等宽", readerSettings.fontFamily == ReaderFontFamily.MONOSPACE) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.MONOSPACE)
-                        }
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1349,7 +1384,7 @@ if (showProgressJumpDialog) {
                         onValueChange = {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, letterSpacing = it)
                         },
-                        valueRange = 0f..10f
+                        valueRange = -0.5f..1f
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1368,8 +1403,26 @@ if (showProgressJumpDialog) {
                         onValueChange = {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, paragraphSpacing = it)
                         },
-                        valueRange = 0.0f..4.0f
+                        valueRange = 0f..2f
                     )
+                    val isLandscapeAdv = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "横屏双页显示",
+                            color = if (isLandscapeAdv) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                        CompactSwitch(
+                            checked = readerSettings.twoPageMode,
+                            enabled = isLandscapeAdv,
+                            onCheckedChange = {
+                                viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = readerSettings.brightness, scrollMode = false, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn, twoPageMode = it)
+                            }
+                        )
+                    }
                     var showVolumeKeyInfo by remember { mutableStateOf(false) }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1560,6 +1613,59 @@ if (showProgressJumpDialog) {
             },
             confirmButton = {
                 TextButton(onClick = { showAdvancedSettingsDialog = false }) { Text("完成") }
+            }
+        )
+    }
+
+    if (showFontLicenseDialog) {
+        AlertDialog(
+            onDismissRequest = { showFontLicenseDialog = false },
+            title = { Text("内置字体授权") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("本 App 内置 5 种中文字体，均来自开源项目，遵循各自的开源许可证：")
+                    FontLicenseItem(
+                        name = "霞鹜文楷 GB 轻便版",
+                        style = "楷体",
+                        license = "SIL Open Font License 1.1",
+                        source = "github.com/lxgw/LxgwWenkaiGB-Lite"
+                    )
+                    FontLicenseItem(
+                        name = "霞鹜新致宋",
+                        style = "宋体",
+                        license = "SIL Open Font License 1.1",
+                        source = "github.com/lxgw/LxgwNeoZhiSong"
+                    )
+                    FontLicenseItem(
+                        name = "演示夏行楷",
+                        style = "行楷",
+                        license = "免费商用",
+                        source = "github.com/wordshub/free-font"
+                    )
+                    FontLicenseItem(
+                        name = "霞鹜新晰黑",
+                        style = "黑体",
+                        license = "SIL Open Font License 1.1",
+                        source = "github.com/lxgw/LxgwNeoXiHei"
+                    )
+                    FontLicenseItem(
+                        name = "文源圆体 (WenYuan Rounded)",
+                        style = "幼圆",
+                        license = "SIL Open Font License 1.1",
+                        source = "github.com/takushun-wu/WenYuanFonts"
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "字体文件已裁剪到 GB2312 字符集及常用扩展，减小安装包体积。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showFontLicenseDialog = false }) { Text("关闭") }
             }
         )
     }
@@ -2033,4 +2139,31 @@ private fun Long.hueValue(default: Float): Float {
 private fun hsvToRgb(hue: Float, saturation: Float, value: Float): Long {
     val color = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value))
     return (color and 0xFFFFFF).toLong()
+}
+
+@Composable
+private fun FontLicenseItem(name: String, style: String, license: String, source: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(style, style = MaterialTheme.typography.titleMedium)
+            Text(name, style = MaterialTheme.typography.bodyMedium)
+        }
+        Text("授权: $license", style = MaterialTheme.typography.bodySmall)
+        Text("来源: $source", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun batteryIcon(level: Int, charging: Boolean): androidx.compose.ui.graphics.vector.ImageVector {
+    return when {
+        charging -> Icons.Filled.BatteryChargingFull
+        else -> when {
+            level >= 95 -> Icons.Filled.BatteryFull
+            level >= 80 -> Icons.Filled.Battery6Bar
+            level >= 60 -> Icons.Filled.Battery5Bar
+            level >= 40 -> Icons.Filled.Battery4Bar
+            level >= 20 -> Icons.Filled.Battery3Bar
+            level >= 5 -> Icons.Filled.Battery2Bar
+            else -> Icons.Filled.BatteryAlert
+        }
+    }
 }
