@@ -53,6 +53,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
     private val sessionId: Long by lazy { requireArguments().getLong(ARG_SESSION_ID) }
     private val containerId: Int by lazy { View.generateViewId() }
     private var lastChapterName: String = ""
+    private var lastTwoPageActive: Boolean? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -115,6 +116,11 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
         val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
         applyReaderSettings(session, navigator, session.displaySettings)
         stabilizeInitialLayout(view)
+        view.post {
+            if (!isAdded || view == null) return@post
+            val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment ?: return@post
+            injectLayoutCss(nav, session.displaySettings)
+        }
         (navigator as? VisualNavigator)?.addInputListener(object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
                 val viewWidth = view.width.takeIf { it > 0 } ?: return false
@@ -307,10 +313,8 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !session.displaySettings.forcePublisherFonts
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = session.displaySettings.twoPageMode && isLandscape
-            injectCustomCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
+            injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
         }
-        // 跳转/翻页后重新计算 WebView 布局，避免显示不全
-        view?.let { stabilizeInitialLayout(it) }
     }
 
 private suspend fun saveProgress(bookId: Int, locator: Locator) {
@@ -515,15 +519,11 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
     private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progress: Double) {
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
         val clampedProgress = progress.coerceIn(0.0, 1.0)
-        // 用 progress * size 而非 * (size - 1)，确保 100% 能跳到最后一章
         val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
         val targetLink = links[index]
-        // 使用 totalProgression 而不是 progression，让 Readium 按全书进度精确跳转
         val mediaType = targetLink.mediaType?.toString() ?: "application/xhtml+xml"
         val hrefStr = targetLink.href.toString().replace("\"", "\\\"")
-        val locatorJson = """
-            {"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":$clampedProgress}}
-        """.trimIndent()
+        val locatorJson = """{"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":$clampedProgress}}""".trimIndent()
         runCatching { Locator.fromJSON(JSONObject(locatorJson)) }
             .getOrNull()
             ?.let { navigator.go(it) }
@@ -629,56 +629,80 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     backgroundColor = readiumColorOrNull(settings.readerBackgroundColor),
                     fontFamily = readiumFontFamily,
                     fontSize = settings.fontScale.toDouble(),
+                    letterSpacing = settings.letterSpacing.takeIf { it > 0f }?.toDouble(),
                     lineHeight = settings.lineHeight.toDouble(),
                     pageMargins = settings.pageMargins.toDouble(),
+                    paragraphSpacing = settings.paragraphSpacing.toDouble(),
                     publisherStyles = settings.publisherStyles,
                     scroll = settings.scrollMode,
                     textColor = readiumColorOrNull(settings.readerTextColor),
                 )
             )
-            injectCustomCss(navigator, settings, avoidLargePublisherFonts, twoPageActive)
+            injectLayoutCss(navigator, settings)
+            injectBasicCss(navigator, settings, avoidLargePublisherFonts, twoPageActive)
         }
     }
 
-    private fun injectCustomCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
-        val twoPageCss = if (twoPageActive) {
-            "document.body.style.columnCount='2';document.body.style.webkitColumnCount='2';document.body.style.columnGap='24px';document.body.style.webkitColumnGap='24px';document.body.style.maxWidth='none';document.body.style.width='auto';"
-        } else {
-            "document.body.style.columnCount='';document.body.style.webkitColumnCount='';document.body.style.columnGap='';document.body.style.webkitColumnGap='';document.body.style.maxWidth='';document.body.style.width='';"
+    private fun injectLayoutCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
+        val css = buildString {
+            if (settings.letterSpacing != 0f) {
+                val ls = String.format(java.util.Locale.US, "%.2f", settings.letterSpacing)
+                append("html, body, body *, p, div, span, h1, h2, h3, h4, h5, h6, li, td, th, blockquote, dd, dt, figcaption, caption, address { letter-spacing: ${ls}em !important; }\n")
+            }
+            if (settings.lineHeight != 1.5f) {
+                val lh = String.format(java.util.Locale.US, "%.2f", settings.lineHeight)
+                append("html, body { line-height: ${lh} !important; }\n")
+            }
+            if (settings.paragraphSpacing != 1.0f) {
+                val ps = String.format(java.util.Locale.US, "%.2f", settings.paragraphSpacing)
+                append("p { margin-top: ${ps}em !important; margin-bottom: ${ps}em !important; }\n")
+            }
         }
+        injectStyle(navigator, "talebook-reader-layout-css", css)
+    }
 
-        val cssParts = StringBuilder()
-        cssParts.append(twoPageCss)
-
-        if (settings.letterSpacing != 0f) {
-            val ls = String.format(java.util.Locale.US, "%.2f", settings.letterSpacing)
-            cssParts.append("var _els=document.querySelectorAll('p,div,span,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,dd,dt,figcaption,caption,address');for(var i=0;i<_els.length;i++){_els[i].style.letterSpacing='${ls}em';}document.body.style.letterSpacing='${ls}em';")
-        } else {
-            cssParts.append("var _els=document.querySelectorAll('p,div,span,h1,h2,h3,h4,h5,h6,li,td,th,blockquote,dd,dt,figcaption,caption,address');for(var i=0;i<_els.length;i++){_els[i].style.removeProperty('letter-spacing');}document.body.style.removeProperty('letter-spacing');")
+    private fun injectBasicCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
+        val css = buildString {
+            append("html, body { margin: 0 !important; padding: 0 !important; }")
+            if (avoidLargePublisherFonts) {
+                append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
+            }
+            if (twoPageActive) {
+                append("body { -webkit-column-count: 2 !important; column-count: 2 !important; column-width: auto !important; column-gap: 24px !important; column-fill: balance !important; max-width: none !important; width: auto !important; }")
+            }
         }
-
-        if (settings.lineHeight != 1.5f) {
-            val lh = String.format(java.util.Locale.US, "%.2f", settings.lineHeight)
-            cssParts.append("document.body.style.lineHeight='$lh';")
-        } else {
-            cssParts.append("document.body.style.removeProperty('line-height');")
+        val isTwoPageActiveChanged = lastTwoPageActive != null && lastTwoPageActive != twoPageActive
+        lastTwoPageActive = twoPageActive
+        injectStyle(navigator, "talebook-reader-custom-css", css)
+        if (isTwoPageActiveChanged) {
+            val beforeLocator = navigator.currentLocator.value
+            viewLifecycleOwner.lifecycleScope.launch {
+                delay(150)
+                if (isAdded) {
+                    runCatching { navigator.go(beforeLocator) }
+                }
+            }
         }
+    }
 
-        if (settings.paragraphSpacing != 1.0f) {
-            val ps = String.format(java.util.Locale.US, "%.2f", settings.paragraphSpacing)
-            cssParts.append("var _ps=document.querySelectorAll('p');for(var i=0;i<_ps.length;i++){_ps[i].style.marginBottom='${ps}em';}")
-        } else {
-            cssParts.append("var _ps=document.querySelectorAll('p');for(var i=0;i<_ps.length;i++){_ps[i].style.removeProperty('margin-bottom');}")
-        }
-
+    private fun injectStyle(navigator: EpubNavigatorFragment, id: String, css: String) {
+        val escaped = css.replace("'", "\\'").replace("\n", " ")
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
-                val script = "(function() {${cssParts}})();"
-                navigator.evaluateJavascript(script)
+                navigator.evaluateJavascript(
+                    "(function() { var old = document.getElementById('$id'); if (old) old.remove(); var s = document.createElement('style'); s.id = '$id'; s.type = 'text/css'; s.innerHTML = '$escaped'; (document.head || document.documentElement).appendChild(s); })();"
+                )
             }.onFailure { error ->
                 Log.w("TaleReadium", "Custom CSS injection skipped: " + error.message)
             }
         }
+    }
+
+    private fun publisherFontFamilyCss(fontFamily: ReaderFontFamily): String = when (fontFamily) {
+        ReaderFontFamily.SERIF -> "serif"
+        ReaderFontFamily.MONOSPACE -> "monospace"
+        ReaderFontFamily.DEFAULT,
+        ReaderFontFamily.SANS_SERIF -> "sans-serif"
     }
 
     private fun readiumColorOrNull(rgb: Long): ReadiumColor? {

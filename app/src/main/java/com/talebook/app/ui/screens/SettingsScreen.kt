@@ -1063,7 +1063,9 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                         "阅读器字体选择改为4种：默认、宋体（serif）、黑体（sans-serif）、等宽（monospace）。",
                         "修复字间距、行间距、段间距设置不生效的问题。",
                         "修复跳转进度后页面布局不刷新的问题。",
-                        "移除字体版权对话框。"
+                        "移除字体版权对话框。",
+                        "修复折叠屏横屏闪退的 bug。",
+                        "修复跳转进度后的显示 bug。"
                     )
                 )
                 ChangelogSection(
