@@ -55,7 +55,7 @@ class MainActivity : FragmentActivity() {
         applyGlobalSystemBars()
 
         lifecycleScope.launch {
-            SettingsRepository(applicationContext).migrateLegacyMargins()
+            // Migration logic removed
         }
 
         setContent {

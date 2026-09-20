@@ -79,8 +79,6 @@ class SettingsRepository(private val context: Context) {
         private val READER_TAP_PAGE_TURN_KEY = booleanPreferencesKey("reader_tap_page_turn")
         private val READER_PAGE_TURN_MODE_KEY = stringPreferencesKey("reader_page_turn_mode")
         private val READER_PAGE_MARGINS_KEY = floatPreferencesKey("reader_page_margins")
-        private val READER_PAGE_MARGIN_HORIZONTAL_KEY = floatPreferencesKey("reader_page_margin_horizontal")
-        private val READER_PAGE_MARGIN_VERTICAL_KEY = floatPreferencesKey("reader_page_margin_vertical")
         private val READER_PARAGRAPH_SPACING_KEY = floatPreferencesKey("reader_paragraph_spacing")
         private val READER_LETTER_SPACING_KEY = floatPreferencesKey("reader_letter_spacing")
         private val READER_PUBLISHER_STYLES_KEY = booleanPreferencesKey("reader_publisher_styles")
@@ -90,7 +88,6 @@ class SettingsRepository(private val context: Context) {
         private val READER_HIDE_TIME_KEY = booleanPreferencesKey("reader_hide_time_in_reader")
         private val READER_HIDE_CHAPTER_PATH_KEY = booleanPreferencesKey("reader_hide_chapter_path_in_reader")
         private val READER_AUTO_REFRESH_HOME_ON_ENTER_KEY = booleanPreferencesKey("reader_auto_refresh_home_on_enter")
-        private val READER_PAGE_MARGIN_SEPARATE_MODE_KEY = booleanPreferencesKey("reader_page_margin_separate_mode")
         private val SHOW_TAB_LABEL_KEY = booleanPreferencesKey("show_tab_label")
         private val READER_TOOLBAR_LABELS_KEY = booleanPreferencesKey("reader_toolbar_labels")
         private val READER_HIDE_TOOLBAR_LABELS_KEY = booleanPreferencesKey("reader_hide_toolbar_labels")
@@ -290,14 +287,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_PAGE_MARGINS_KEY] ?: 1.0f
     }
 
-    val readerPageMarginHorizontal: Flow<Float> = context.dataStore.data.map { prefs ->
-        prefs[READER_PAGE_MARGIN_HORIZONTAL_KEY] ?: prefs[READER_PAGE_MARGINS_KEY] ?: 1.0f
-    }
-
-    val readerPageMarginVertical: Flow<Float> = context.dataStore.data.map { prefs ->
-        prefs[READER_PAGE_MARGIN_VERTICAL_KEY] ?: prefs[READER_PAGE_MARGINS_KEY] ?: 1.0f
-    }
-
     val readerParagraphSpacing: Flow<Float> = context.dataStore.data.map { prefs ->
         prefs[READER_PARAGRAPH_SPACING_KEY] ?: 1.0f
     }
@@ -332,10 +321,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val readerAutoRefreshHomeOnEnter: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_AUTO_REFRESH_HOME_ON_ENTER_KEY] ?: false
-    }
-
-    val readerPageMarginSeparateMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[READER_PAGE_MARGIN_SEPARATE_MODE_KEY] ?: false
     }
 
     val readerPageAnimation: Flow<String> = context.dataStore.data.map { prefs ->
@@ -696,12 +681,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         }
     }
 
-    suspend fun saveReaderPageMarginSeparateMode(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[READER_PAGE_MARGIN_SEPARATE_MODE_KEY] = enabled
-        }
-    }
-
     suspend fun saveShowTabLabel(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[SHOW_TAB_LABEL_KEY] = enabled
@@ -743,9 +722,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         tapPageTurn: Boolean,
         pageTurnMode: String,
         pageMargins: Float,
-        pageMarginHorizontal: Float = pageMargins,
-        pageMarginVertical: Float = pageMargins,
-        pageMarginSeparateMode: Boolean = false,
         paragraphSpacing: Float,
         letterSpacing: Float,
         publisherStyles: Boolean,
@@ -758,8 +734,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         forceTapAnimation: Boolean,
         twoPageMode: Boolean
     ) {
-        val horizontal = pageMarginHorizontal.coerceIn(0.5f, 3.0f)
-        val vertical = pageMarginVertical.coerceIn(0.5f, 3.0f)
         context.dataStore.edit { prefs ->
             prefs[READER_FONT_SCALE_KEY] = fontScale.coerceIn(0.5f, 3.0f)
             prefs[READER_FONT_FAMILY_KEY] = when (fontFamily) {
@@ -780,9 +754,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
                 else -> "inverted_l"
             }
             prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0.5f, 3.0f)
-            prefs[READER_PAGE_MARGIN_HORIZONTAL_KEY] = horizontal
-            prefs[READER_PAGE_MARGIN_VERTICAL_KEY] = vertical
-            prefs[READER_PAGE_MARGIN_SEPARATE_MODE_KEY] = pageMarginSeparateMode
             prefs[READER_PARAGRAPH_SPACING_KEY] = paragraphSpacing.coerceIn(0.0f, 4.0f)
             prefs[READER_LETTER_SPACING_KEY] = letterSpacing.coerceIn(-0.2f, 1f)
             prefs[READER_PUBLISHER_STYLES_KEY] = publisherStyles
@@ -803,20 +774,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
             prefs[READER_VOLUME_KEY_PAGE_TURN_KEY] = volumeKeyPageTurn
             prefs[READER_FORCE_TAP_ANIMATION_KEY] = forceTapAnimation
             prefs[READER_TWO_PAGE_MODE_KEY] = twoPageMode
-        }
-    }
-
-    suspend fun migrateLegacyMargins() {
-        context.dataStore.edit { prefs ->
-            val hasH = prefs[READER_PAGE_MARGIN_HORIZONTAL_KEY] != null
-            val hasV = prefs[READER_PAGE_MARGIN_VERTICAL_KEY] != null
-            val legacy = prefs[READER_PAGE_MARGINS_KEY]
-            if (!hasH && legacy != null) {
-                prefs[READER_PAGE_MARGIN_HORIZONTAL_KEY] = legacy
-            }
-            if (!hasV && legacy != null) {
-                prefs[READER_PAGE_MARGIN_VERTICAL_KEY] = legacy
-            }
         }
     }
 
