@@ -773,7 +773,7 @@ private suspend fun openReadiumSession(
 
     fun goToBookmark(bookmark: ReaderBookmarkEntity) {
         _uiState.value.sessionId?.let { sessionId ->
-            ReadiumUiEvents.emitGoToLocator(sessionId, bookmark.locatorJson)
+            ReadiumUiEvents.emitReaderJump(sessionId, bookmark.locatorJson)
         }
     }
 
@@ -809,7 +809,7 @@ private suspend fun openReadiumSession(
 
     fun goToAnnotation(annotation: ReaderAnnotationEntity) {
         _uiState.value.sessionId?.let { sessionId ->
-            ReadiumUiEvents.emitGoToLocator(sessionId, annotation.locatorJson)
+            ReadiumUiEvents.emitReaderJump(sessionId, annotation.locatorJson)
         }
     }
 

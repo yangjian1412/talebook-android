@@ -63,14 +63,18 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             return
         }
 
+        val jumpLocator = arguments?.getString(ARG_JUMP_TO)?.let { json ->
+            runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
+        }
+
         childFragmentManager.fragmentFactory = when (session) {
             is EpubReadiumSession -> session.navigatorFactory.createFragmentFactory(
-                initialLocator = session.initialLocator,
+                initialLocator = jumpLocator ?: session.initialLocator,
                 listener = this,
                 paginationListener = this
             )
             is PdfReadiumSession -> session.navigatorFactory.createFragmentFactory(
-                initialLocator = session.initialLocator,
+                initialLocator = jumpLocator ?: session.initialLocator,
                 listener = this
             )
         }
@@ -211,19 +215,24 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
                             val link = findLink(session.publication.tableOfContents, href)
                                 ?: findLink(session.publication.readingOrder, href)
                             if (link != null) {
-                                (navigator as? HyperlinkNavigator)?.go(link)
+                                restartWithLocator(buildLocatorJson(link))
                             }
                         }
                     }
                     .launchIn(this)
                 ReadiumUiEvents.goToProgress
                     .onEach { (targetSessionId, progress) ->
-                        if (targetSessionId == sessionId) goToProgress(session.publication.readingOrder, navigator, progress)
+                        if (targetSessionId == sessionId) restartByProgress(session.publication.readingOrder, progress)
                     }
                     .launchIn(this)
                 ReadiumUiEvents.goToPage
                     .onEach { (targetSessionId, page) ->
-                        if (targetSessionId == sessionId) goToPage(session.publication.readingOrder, navigator, page)
+                        if (targetSessionId == sessionId) restartByPage(session.publication.readingOrder, page)
+                    }
+                    .launchIn(this)
+                ReadiumUiEvents.readerJump
+                    .onEach { (targetSessionId, locatorJson) ->
+                        if (targetSessionId == sessionId) restartWithLocator(locatorJson)
                     }
                     .launchIn(this)
                 ReadiumUiEvents.readerSettings
@@ -314,7 +323,6 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = session.displaySettings.twoPageMode && isLandscape
             injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
-            injectViewportMeta(navigator)
         }
     }
 
@@ -531,10 +539,35 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             ?: navigator.go(targetLink)
     }
 
-    private fun goToPage(readingOrder: List<Link>, navigator: Navigator, page: Int) {
+    private fun restartByProgress(readingOrder: List<Link>, progress: Double) {
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
-        val targetLink = links[(page - 1).coerceIn(0, links.lastIndex)]
-        navigator.go(targetLink)
+        val clampedProgress = progress.coerceIn(0.0, 1.0)
+        val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
+        restartWithLocator(buildLocatorJson(links[index], totalProgression = clampedProgress))
+    }
+
+    private fun restartByPage(readingOrder: List<Link>, page: Int) {
+        val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
+        restartWithLocator(buildLocatorJson(links[(page - 1).coerceIn(0, links.lastIndex)]))
+    }
+
+    private fun buildLocatorJson(link: Link, totalProgression: Double? = null): String {
+        val mediaType = link.mediaType?.toString() ?: "application/xhtml+xml"
+        val hrefStr = link.href.toString().replace("\"", "\\\"")
+        return if (totalProgression != null)
+            """{"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":$totalProgression}}"""
+        else
+            """{"href":"$hrefStr","type":"$mediaType"}"""
+    }
+
+    private fun restartWithLocator(locatorJson: String) {
+        val v = view ?: return
+        if (!isAdded) return
+        val container = (v.parent as? ViewGroup)?.id ?: return
+        if (container == View.NO_ID) return
+        parentFragmentManager.beginTransaction()
+            .replace(container, ReadiumHostFragment.newInstance(sessionId, locatorJson), tag(sessionId))
+            .commitNowAllowingStateLoss()
     }
 
     private suspend fun applyAnnotationDecorations(serverId: String, bookId: Int, navigator: Navigator) {
@@ -665,7 +698,7 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
 
     private fun injectBasicCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
         val css = buildString {
-            append("html, body { margin: 0 !important; padding: 0 !important; }")
+            append("html, body { margin: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; }")
             append("html, :root { height: 100% !important; max-height: 100% !important; }")
             if (avoidLargePublisherFonts) {
                 append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
@@ -677,7 +710,6 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         val isTwoPageActiveChanged = lastTwoPageActive != null && lastTwoPageActive != twoPageActive
         lastTwoPageActive = twoPageActive
         injectStyle(navigator, "talebook-reader-custom-css", css)
-        injectViewportMeta(navigator)
         if (isTwoPageActiveChanged) {
             val beforeLocator = navigator.currentLocator.value
             viewLifecycleOwner.lifecycleScope.launch {
@@ -698,22 +730,6 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
                 )
             }.onFailure { error ->
                 Log.w("TaleReadium", "Custom CSS injection skipped: " + error.message)
-            }
-        }
-    }
-
-    private fun injectViewportMeta(navigator: EpubNavigatorFragment) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            runCatching {
-                navigator.evaluateJavascript(
-                    "(function() {" +
-                    "var meta = document.querySelector('meta[name=\"viewport\"]');" +
-                    "if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }" +
-                    "meta.content = 'width=device-width, initial-scale=1.0, user-scalable=no';" +
-                    "})();"
-                )
-            }.onFailure { error ->
-                Log.w("TaleReadium", "Viewport meta injection skipped: " + error.message)
             }
         }
     }
@@ -790,10 +806,14 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
 
     companion object {
         private const val ARG_SESSION_ID = "session_id"
+        private const val ARG_JUMP_TO = "jump_to"
         private const val NAVIGATOR_TAG = "readium_navigator"
 
-        fun newInstance(sessionId: Long): ReadiumHostFragment = ReadiumHostFragment().apply {
-            arguments = Bundle().apply { putLong(ARG_SESSION_ID, sessionId) }
+        fun newInstance(sessionId: Long, jumpTo: String? = null): ReadiumHostFragment = ReadiumHostFragment().apply {
+            arguments = Bundle().apply {
+                putLong(ARG_SESSION_ID, sessionId)
+                if (jumpTo != null) putString(ARG_JUMP_TO, jumpTo)
+            }
         }
 
         fun tag(sessionId: Long): String = "readium_host_$sessionId"
