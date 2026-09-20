@@ -194,7 +194,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
                         if (targetSessionId == sessionId) {
                             runCatching { Locator.fromJSON(JSONObject(locatorJson)) }
                                 .getOrNull()
-                                ?.let { navigator.go(it) }
+                                ?.let { locator -> navigator.go(locator) }
                         }
                     }
                     .launchIn(this)
@@ -314,6 +314,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = session.displaySettings.twoPageMode && isLandscape
             injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
+            injectViewportMeta(navigator)
         }
     }
 
@@ -516,7 +517,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         return true
     }
 
-    private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progress: Double) {
+private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progress: Double) {
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
         val clampedProgress = progress.coerceIn(0.0, 1.0)
         val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
@@ -532,7 +533,8 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
 
     private fun goToPage(readingOrder: List<Link>, navigator: Navigator, page: Int) {
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
-        navigator.go(links[(page - 1).coerceIn(0, links.lastIndex)])
+        val targetLink = links[(page - 1).coerceIn(0, links.lastIndex)]
+        navigator.go(targetLink)
     }
 
     private suspend fun applyAnnotationDecorations(serverId: String, bookId: Int, navigator: Navigator) {
@@ -664,6 +666,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
     private fun injectBasicCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
         val css = buildString {
             append("html, body { margin: 0 !important; padding: 0 !important; }")
+            append("html, :root { height: 100% !important; max-height: 100% !important; }")
             if (avoidLargePublisherFonts) {
                 append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
             }
@@ -674,6 +677,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         val isTwoPageActiveChanged = lastTwoPageActive != null && lastTwoPageActive != twoPageActive
         lastTwoPageActive = twoPageActive
         injectStyle(navigator, "talebook-reader-custom-css", css)
+        injectViewportMeta(navigator)
         if (isTwoPageActiveChanged) {
             val beforeLocator = navigator.currentLocator.value
             viewLifecycleOwner.lifecycleScope.launch {
@@ -694,6 +698,22 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 )
             }.onFailure { error ->
                 Log.w("TaleReadium", "Custom CSS injection skipped: " + error.message)
+            }
+        }
+    }
+
+    private fun injectViewportMeta(navigator: EpubNavigatorFragment) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                navigator.evaluateJavascript(
+                    "(function() {" +
+                    "var meta = document.querySelector('meta[name=\"viewport\"]');" +
+                    "if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }" +
+                    "meta.content = 'width=device-width, initial-scale=1.0, user-scalable=no';" +
+                    "})();"
+                )
+            }.onFailure { error ->
+                Log.w("TaleReadium", "Viewport meta injection skipped: " + error.message)
             }
         }
     }
