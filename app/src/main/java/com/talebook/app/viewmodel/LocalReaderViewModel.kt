@@ -92,6 +92,7 @@ data class LocalReaderUiState(
         appDark = false,
         pageTurnMode = ReaderPageTurnMode.INVERTED_L,
         pageMargins = 1.0f,
+        pageMarginVertical = 0f,
         paragraphSpacing = 1.0f,
         publisherStyles = true,
         forcePublisherFonts = false,
@@ -251,6 +252,7 @@ class LocalReaderViewModel : ViewModel() {
                                 appDark = appDark,
                                 pageTurnMode = settingsRepository.readerPageTurnMode.first().toReaderPageTurnMode(),
                                 pageMargins = settingsRepository.readerPageMargins.first(),
+                                pageMarginVertical = settingsRepository.readerPageMarginVertical.first(),
                                 paragraphSpacing = settingsRepository.readerParagraphSpacing.first(),
                                 publisherStyles = settingsRepository.readerPublisherStyles.first(),
                                 forcePublisherFonts = settingsRepository.readerForcePublisherFonts.first(),
@@ -534,8 +536,9 @@ class LocalReaderViewModel : ViewModel() {
             tapPageTurn = settingsRepository.readerTapPageTurn.first(),
             appDark = appDark,
             pageTurnMode = settingsRepository.readerPageTurnMode.first().toReaderPageTurnMode(),
-             pageMargins = settingsRepository.readerPageMargins.first(),
-             paragraphSpacing = settingsRepository.readerParagraphSpacing.first(),
+pageMargins = settingsRepository.readerPageMargins.first(),
+            pageMarginVertical = settingsRepository.readerPageMarginVertical.first(),
+            paragraphSpacing = settingsRepository.readerParagraphSpacing.first(),
             publisherStyles = settingsRepository.readerPublisherStyles.first(),
             forcePublisherFonts = settingsRepository.readerForcePublisherFonts.first(),
             keepScreenOn = settingsRepository.readerKeepScreenOn.first(),
@@ -853,6 +856,7 @@ private suspend fun openReadiumSession(
         fontFamily: ReaderFontFamily = _uiState.value.readerSettings.fontFamily,
         pageTurnMode: ReaderPageTurnMode = _uiState.value.readerSettings.pageTurnMode,
         pageMargins: Float = _uiState.value.readerSettings.pageMargins,
+        pageMarginVertical: Float = _uiState.value.readerSettings.pageMarginVertical,
         paragraphSpacing: Float = _uiState.value.readerSettings.paragraphSpacing,
         letterSpacing: Float = _uiState.value.readerSettings.letterSpacing,
         publisherStyles: Boolean = _uiState.value.readerSettings.publisherStyles,
@@ -868,6 +872,7 @@ private suspend fun openReadiumSession(
         customThemeEnabled: Boolean = _uiState.value.readerSettings.customThemeEnabled,
         twoPageMode: Boolean = _uiState.value.readerSettings.twoPageMode,
         appDark: Boolean = _uiState.value.readerSettings.appDark,
+        persist: Boolean = true,
     ) {
         val settings = ReaderDisplaySettings(
             fontFamily = fontFamily,
@@ -880,7 +885,8 @@ private suspend fun openReadiumSession(
             tapPageTurn = tapPageTurn,
             appDark = appDark,
             pageTurnMode = pageTurnMode,
-            pageMargins = pageMargins.coerceIn(0.5f, 3.0f),
+            pageMargins = pageMargins.coerceIn(0f, 5.0f),
+            pageMarginVertical = pageMarginVertical.coerceIn(0f, 10.0f),
             paragraphSpacing = paragraphSpacing.coerceIn(0f, 2f),
             letterSpacing = letterSpacing.coerceIn(-0.2f, 1f),
             publisherStyles = publisherStyles,
@@ -908,6 +914,7 @@ private suspend fun openReadiumSession(
                 ReadiumUiEvents.emitReaderThemeChanged(sessionId, settings)
             }
         }
+        if (!persist) return
         viewModelScope.launch {
             val repo = SettingsRepository(appContext ?: return@launch)
             repo.saveReaderDisplaySettings(
@@ -921,6 +928,7 @@ private suspend fun openReadiumSession(
                 tapPageTurn = settings.tapPageTurn,
                 pageTurnMode = settings.pageTurnMode.toStorageValue(),
                 pageMargins = settings.pageMargins,
+                pageMarginVertical = settings.pageMarginVertical,
                 paragraphSpacing = settings.paragraphSpacing,
                 letterSpacing = settings.letterSpacing,
                 publisherStyles = settings.publisherStyles,
@@ -934,6 +942,14 @@ private suspend fun openReadiumSession(
                 twoPageMode = settings.twoPageMode
             )
             repo.saveReaderCustomColors(settings.readerBackgroundColor, settings.readerTextColor, settings.customThemeEnabled)
+        }
+    }
+
+    fun persistPageMargins() {
+        val settings = _uiState.value.readerSettings
+        viewModelScope.launch {
+            val repo = SettingsRepository(appContext ?: return@launch)
+            repo.savePageMargins(settings.pageMargins, settings.pageMarginVertical)
         }
     }
 

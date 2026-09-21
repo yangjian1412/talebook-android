@@ -54,6 +54,8 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
     private val containerId: Int by lazy { View.generateViewId() }
     private var lastChapterName: String = ""
     private var lastTwoPageActive: Boolean? = null
+    private var lastAvoidLargePublisherFonts: Boolean? = null
+    private var lastFontFamily: ReaderFontFamily? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -697,8 +699,10 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
     }
 
     private fun injectBasicCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
+        val customCssChanged = lastTwoPageActive != twoPageActive ||
+            lastAvoidLargePublisherFonts != avoidLargePublisherFonts ||
+            lastFontFamily != settings.fontFamily
         val css = buildString {
-            append("html, body { margin: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; }")
             append("html, :root { height: 100% !important; max-height: 100% !important; }")
             if (avoidLargePublisherFonts) {
                 append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
@@ -707,16 +711,52 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
                 append("body { -webkit-column-count: 2 !important; column-count: 2 !important; column-width: auto !important; column-gap: 24px !important; column-fill: balance !important; max-width: none !important; width: auto !important; }")
             }
         }
-        val isTwoPageActiveChanged = lastTwoPageActive != null && lastTwoPageActive != twoPageActive
-        lastTwoPageActive = twoPageActive
-        injectStyle(navigator, "talebook-reader-custom-css", css)
-        if (isTwoPageActiveChanged) {
+        if (customCssChanged) {
+            lastTwoPageActive = twoPageActive
+            lastAvoidLargePublisherFonts = avoidLargePublisherFonts
+            lastFontFamily = settings.fontFamily
+            injectStyle(navigator, "talebook-reader-custom-css", css)
+        }
+        val vPad = String.format(java.util.Locale.US, "%.2f", settings.pageMarginVertical)
+        injectPagePadding(navigator, "${vPad}rem")
+        if (twoPageActive != (lastTwoPageActive ?: twoPageActive)) {
             val beforeLocator = navigator.currentLocator.value
             viewLifecycleOwner.lifecycleScope.launch {
                 delay(150)
                 if (isAdded) {
                     runCatching { navigator.go(beforeLocator) }
                 }
+            }
+        }
+    }
+
+    private fun injectPagePadding(navigator: EpubNavigatorFragment, padding: String) {
+        val js = """
+            (function(){
+                var PAD = '$padding';
+                function apply() {
+                    var html = document.documentElement;
+                    var body = document.body;
+                    if (!html || !body) return false;
+                    html.style.setProperty('padding-top', PAD, 'important');
+                    html.style.setProperty('padding-bottom', PAD, 'important');
+                    body.style.setProperty('padding-top', PAD, 'important');
+                    body.style.setProperty('padding-bottom', PAD, 'important');
+                    return true;
+                }
+                if (!apply()) {
+                    document.addEventListener('DOMContentLoaded', function once() {
+                        apply();
+                        document.removeEventListener('DOMContentLoaded', once);
+                    });
+                }
+            })();
+        """.trimIndent()
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                navigator.evaluateJavascript(js)
+            }.onFailure { error ->
+                Log.w("TaleReadium", "Page padding injection failed: " + error.message)
             }
         }
     }

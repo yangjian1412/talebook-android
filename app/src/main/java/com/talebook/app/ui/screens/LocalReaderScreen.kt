@@ -211,6 +211,7 @@ fun LocalReaderScreen(
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
     var showCustomThemeDialog by remember { mutableStateOf(false) }
+    var showPageMarginDialog by remember { mutableStateOf(false) }
     var previewBackground by remember(customBackground) { mutableStateOf(customBackground) }
     var previewText by remember(customText) { mutableStateOf(customText) }
     var showProgressJumpDialog by remember { mutableStateOf(false) }
@@ -1086,33 +1087,13 @@ if (showProgressJumpDialog) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("页边距")
                             Text(
-                                text = "${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMargins)}",
+                                text = "左右 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMargins)} · 上下 ${String.format(java.util.Locale.US, "%.1f", readerSettings.pageMarginVertical)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        TextButton(
-                            onClick = {
-                                viewModel.updateReaderSettings(
-                                    fontScale = readerSettings.fontScale,
-                                    lineHeight = readerSettings.lineHeight,
-                                    brightness = readerSettings.brightness,
-                                    scrollMode = readerSettings.scrollMode,
-                                    useSystemBrightness = readerSettings.useSystemBrightness,
-                                    theme = readerSettings.theme,
-                                    tapPageTurn = readerSettings.tapPageTurn,
-                                    pageMargins = 1.0f
-                                )
-                            }
-                        ) { Text("默认") }
+                        TextButton(onClick = { showPageMarginDialog = true }) { Text("调整") }
                     }
-                    CompactSlider(
-                        value = readerSettings.pageMargins,
-                        onValueChange = {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageMargins = it)
-                        },
-                        valueRange = 0.5f..3.0f
-                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1213,6 +1194,81 @@ if (showProgressJumpDialog) {
             },
             confirmButton = {
                 TextButton(onClick = { showSettingsDialog = false }) { Text("完成") }
+            }
+        )
+    }
+
+    if (showPageMarginDialog) {
+        var localH by remember(readerSettings.pageMargins) { mutableStateOf(readerSettings.pageMargins) }
+        var localV by remember(readerSettings.pageMarginVertical) { mutableStateOf(readerSettings.pageMarginVertical) }
+        fun pushLive(h: Float, v: Float) {
+            viewModel.updateReaderSettings(
+                fontScale = readerSettings.fontScale,
+                lineHeight = readerSettings.lineHeight,
+                brightness = readerSettings.brightness,
+                scrollMode = readerSettings.scrollMode,
+                useSystemBrightness = readerSettings.useSystemBrightness,
+                theme = readerSettings.theme,
+                tapPageTurn = readerSettings.tapPageTurn,
+                pageMargins = h,
+                pageMarginVertical = v,
+                persist = false
+            )
+        }
+        AlertDialog(
+            onDismissRequest = {
+                viewModel.persistPageMargins()
+                showPageMarginDialog = false
+            },
+            title = { Text("页边距") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("左右 ${String.format(java.util.Locale.US, "%.2f", localH)}")
+                        TextButton(onClick = {
+                            if (localH != 1.0f) {
+                                localH = 1.0f
+                                pushLive(1.0f, localV)
+                                viewModel.persistPageMargins()
+                            }
+                        }) { Text("默认") }
+                    }
+                    CompactSlider(
+                        value = localH,
+                        onValueChange = { h ->
+                            localH = h
+                            pushLive(h, localV)
+                        },
+                        onValueChangeFinished = { viewModel.persistPageMargins() },
+                        valueRange = 0f..5f
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("上下 ${String.format(java.util.Locale.US, "%.2f", localV)}")
+                        TextButton(onClick = {
+                            if (localV != 0f) {
+                                localV = 0f
+                                pushLive(localH, 0f)
+                                viewModel.persistPageMargins()
+                            }
+                        }) { Text("默认") }
+                    }
+                    CompactSlider(
+                        value = localV,
+                        onValueChange = { v ->
+                            localV = v
+                            pushLive(localH, v)
+                        },
+                        onValueChangeFinished = { viewModel.persistPageMargins() },
+                        valueRange = 0f..10f
+                    )
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.persistPageMargins()
+                    showPageMarginDialog = false
+                }) { Text("关闭") }
             }
         )
     }
@@ -1876,14 +1932,16 @@ private fun ReaderThemePresetPicker(
 private fun CompactSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChangeFinished: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
         Slider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
-            modifier = Modifier.fillMaxWidth().scale(scaleX = 1f, scaleY = 0.82f)
+            modifier = Modifier.fillMaxWidth().scale(scaleX = 1f, scaleY = 0.82f),
+            onValueChangeFinished = onValueChangeFinished
         )
     }
 }

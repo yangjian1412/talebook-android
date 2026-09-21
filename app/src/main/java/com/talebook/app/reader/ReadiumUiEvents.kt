@@ -132,6 +132,7 @@ data class ReaderDisplaySettings(
     val appDark: Boolean = false,
     val pageTurnMode: ReaderPageTurnMode = ReaderPageTurnMode.INVERTED_L,
     val pageMargins: Float = 1.0f,
+    val pageMarginVertical: Float = 0f,
     val paragraphSpacing: Float = 1.0f,
     val publisherStyles: Boolean = true,
     val forcePublisherFonts: Boolean = false,

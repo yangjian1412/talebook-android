@@ -79,6 +79,7 @@ class SettingsRepository(private val context: Context) {
         private val READER_TAP_PAGE_TURN_KEY = booleanPreferencesKey("reader_tap_page_turn")
         private val READER_PAGE_TURN_MODE_KEY = stringPreferencesKey("reader_page_turn_mode")
         private val READER_PAGE_MARGINS_KEY = floatPreferencesKey("reader_page_margins")
+        private val READER_PAGE_MARGIN_VERTICAL_KEY = floatPreferencesKey("reader_page_margin_vertical")
         private val READER_PARAGRAPH_SPACING_KEY = floatPreferencesKey("reader_paragraph_spacing")
         private val READER_LETTER_SPACING_KEY = floatPreferencesKey("reader_letter_spacing")
         private val READER_PUBLISHER_STYLES_KEY = booleanPreferencesKey("reader_publisher_styles")
@@ -285,6 +286,10 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val readerPageMargins: Flow<Float> = context.dataStore.data.map { prefs ->
         prefs[READER_PAGE_MARGINS_KEY] ?: 1.0f
+    }
+
+    val readerPageMarginVertical: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[READER_PAGE_MARGIN_VERTICAL_KEY] ?: 0f
     }
 
     val readerParagraphSpacing: Flow<Float> = context.dataStore.data.map { prefs ->
@@ -681,6 +686,13 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         }
     }
 
+    suspend fun savePageMargins(pageMargins: Float, pageMarginVertical: Float) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0f, 5.0f)
+            prefs[READER_PAGE_MARGIN_VERTICAL_KEY] = pageMarginVertical.coerceIn(0f, 10.0f)
+        }
+    }
+
     suspend fun saveShowTabLabel(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[SHOW_TAB_LABEL_KEY] = enabled
@@ -722,6 +734,7 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         tapPageTurn: Boolean,
         pageTurnMode: String,
         pageMargins: Float,
+        pageMarginVertical: Float = pageMargins,
         paragraphSpacing: Float,
         letterSpacing: Float,
         publisherStyles: Boolean,
@@ -753,7 +766,8 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
                 "inverted_l", "left_right", "right_only", "disabled" -> pageTurnMode
                 else -> "inverted_l"
             }
-            prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0.5f, 3.0f)
+            prefs[READER_PAGE_MARGINS_KEY] = pageMargins.coerceIn(0f, 5.0f)
+            prefs[READER_PAGE_MARGIN_VERTICAL_KEY] = pageMarginVertical.coerceIn(0f, 10.0f)
             prefs[READER_PARAGRAPH_SPACING_KEY] = paragraphSpacing.coerceIn(0.0f, 4.0f)
             prefs[READER_LETTER_SPACING_KEY] = letterSpacing.coerceIn(-0.2f, 1f)
             prefs[READER_PUBLISHER_STYLES_KEY] = publisherStyles

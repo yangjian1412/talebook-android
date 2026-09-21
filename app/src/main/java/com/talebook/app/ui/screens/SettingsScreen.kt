@@ -683,7 +683,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.3.0",
+                text = "Tale Book v2.3.1",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -1057,6 +1057,13 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                ChangelogSection(
+                    version = "2.3.1",
+                    items = listOf(
+                        "增加上下页边距调整。",
+                        "修复上下页边距无法调整的bug。"
+                    )
+                )
                 ChangelogSection(
                     version = "2.3.0",
                     items = listOf(
