@@ -52,10 +52,12 @@ import org.readium.r2.shared.util.data.ReadError
 class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavigatorFragment.PaginationListener, PdfNavigatorFragment.Listener {
     private val sessionId: Long by lazy { requireArguments().getLong(ARG_SESSION_ID) }
     private val containerId: Int by lazy { View.generateViewId() }
-    private var lastChapterName: String = ""
+private var lastChapterName: String = ""
     private var lastTwoPageActive: Boolean? = null
     private var lastAvoidLargePublisherFonts: Boolean? = null
     private var lastFontFamily: ReaderFontFamily? = null
+    private var lastTextureId: String = ""
+    private var lastTextureBase64: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -73,7 +75,8 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             is EpubReadiumSession -> session.navigatorFactory.createFragmentFactory(
                 initialLocator = jumpLocator ?: session.initialLocator,
                 listener = this,
-                paginationListener = this
+                paginationListener = this,
+                configuration = buildNaviConfiguration(session.displaySettings)
             )
             is PdfReadiumSession -> session.navigatorFactory.createFragmentFactory(
                 initialLocator = jumpLocator ?: session.initialLocator,
@@ -118,6 +121,10 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
         }
     }
 
+    private fun buildNaviConfiguration(settings: ReaderDisplaySettings): org.readium.r2.navigator.epub.EpubNavigatorFragment.Configuration {
+        return org.readium.r2.navigator.epub.EpubNavigatorFragment.Configuration()
+    }
+
     private fun setupNavigator(view: View, session: ReadiumSession) {
         val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
         applyReaderSettings(session, navigator, session.displaySettings)
@@ -126,6 +133,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             if (!isAdded || view == null) return@post
             val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment ?: return@post
             injectLayoutCss(nav, session.displaySettings)
+            persistEpubPrefsIfReady(nav)
         }
         (navigator as? VisualNavigator)?.addInputListener(object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
@@ -325,6 +333,7 @@ class ReadiumHostFragment : Fragment(), EpubNavigatorFragment.Listener, EpubNavi
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = session.displaySettings.twoPageMode && isLandscape
             injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
+            injectCustomFontCss(navigator, session.displaySettings)
         }
     }
 
@@ -638,8 +647,7 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
     private fun applyReaderSettings(session: ReadiumSession, navigator: Navigator, settings: ReaderDisplaySettings) {
         val activeBg = resolveActiveBackground(settings.readerBackgroundColor, settings.appDark)
         val color = rgbToColor(activeBg)
-        view?.setBackgroundColor(color)
-        activity?.window?.decorView?.setBackgroundColor(color)
+        applyBackground(settings)
         val window = activity?.window
         if (window != null) {
             window.attributes = window.attributes.apply {
@@ -658,6 +666,7 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
                 ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
                 ReaderFontFamily.SANS_SERIF -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
                 ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
+                ReaderFontFamily.CUSTOM -> null
             }
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = settings.twoPageMode && isLandscape
@@ -677,7 +686,16 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             )
             injectLayoutCss(navigator, settings)
             injectBasicCss(navigator, settings, avoidLargePublisherFonts, twoPageActive)
+            injectTextureCss(navigator, settings)
+            injectCustomFontCss(navigator, settings)
         }
+    }
+
+    private fun applyBackground(settings: ReaderDisplaySettings) {
+        val activeBg = resolveActiveBackground(settings.readerBackgroundColor, settings.appDark)
+        val color = rgbToColor(activeBg)
+        view?.setBackgroundColor(color)
+        activity?.window?.decorView?.setBackgroundColor(color)
     }
 
     private fun injectLayoutCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
@@ -704,14 +722,14 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             lastFontFamily != settings.fontFamily
         val css = buildString {
             append("html, :root { height: 100% !important; max-height: 100% !important; }")
-            if (avoidLargePublisherFonts) {
+            if (avoidLargePublisherFonts || settings.fontFamily == ReaderFontFamily.CUSTOM) {
                 append("html, body, body *, p, div, span, a, li, blockquote, h1, h2, h3, h4, h5, h6 { font-family: ${publisherFontFamilyCss(settings.fontFamily)} !important; }")
             }
             if (twoPageActive) {
                 append("body { -webkit-column-count: 2 !important; column-count: 2 !important; column-width: auto !important; column-gap: 24px !important; column-fill: balance !important; max-width: none !important; width: auto !important; }")
             }
         }
-        if (customCssChanged) {
+        if (customCssChanged || settings.fontFamily == ReaderFontFamily.CUSTOM) {
             lastTwoPageActive = twoPageActive
             lastAvoidLargePublisherFonts = avoidLargePublisherFonts
             lastFontFamily = settings.fontFamily
@@ -774,11 +792,147 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         }
     }
 
+    private fun injectTextureCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
+        val textureId = if (settings.appDark) settings.nightTextureId else settings.dayTextureId
+        val variant = if (settings.appDark) "dark" else "light"
+        if (textureId.isEmpty()) {
+            lastTextureId = ""
+            lastTextureBase64 = null
+            injectStyle(navigator, "talebook-reader-texture-css", "")
+            return
+        }
+        val cacheKey = "${textureId}_$variant"
+        if (cacheKey == lastTextureId && lastTextureBase64 != null) {
+            applyTextureCss(navigator, lastTextureBase64!!)
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val resName = "bg_${textureId}_$variant"
+            val resId = resources.getIdentifier(resName, "drawable", requireContext().packageName)
+            if (resId == 0) {
+                Log.w("TaleReadium", "Texture resource not found: $resName")
+                return@launch
+            }
+            val base64 = runCatching {
+                val bytes = resources.openRawResource(resId).use { it.readBytes() }
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            }.getOrNull()
+            if (base64 == null) {
+                Log.w("TaleReadium", "Failed to load texture: $resName")
+                return@launch
+            }
+            lastTextureId = cacheKey
+            lastTextureBase64 = base64
+            applyTextureCss(navigator, base64)
+        }
+    }
+
+    private fun applyTextureCss(navigator: EpubNavigatorFragment, base64: String) {
+        val css = "html, body { background-image: url(data:image/png;base64,$base64) !important; background-repeat: repeat !important; background-attachment: fixed !important; background-size: 128px 128px !important; }"
+        injectStyle(navigator, "talebook-reader-texture-css", css)
+    }
+
+    private var fontStreamSeq = 0
+
+    private fun injectCustomFontCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
+        val path = settings.customFontPath
+        if (settings.fontFamily != ReaderFontFamily.CUSTOM || path.isEmpty()) {
+            fontStreamSeq++
+            injectStyle(navigator, "talebook-reader-fontface-css", "")
+            viewLifecycleOwner.lifecycleScope.launch {
+                runCatching { navigator.evaluateJavascript("window.__tbFontKey=null;window.__tbFont=null;'ok'") }
+            }
+            return
+        }
+        val file = java.io.File(path)
+        if (!file.exists() || !file.isFile) {
+            fontStreamSeq++
+            injectStyle(navigator, "talebook-reader-fontface-css", "")
+            viewLifecycleOwner.lifecycleScope.launch {
+                runCatching { navigator.evaluateJavascript("window.__tbFontKey=null;window.__tbFont=null;'ok'") }
+            }
+            return
+        }
+        val key = "$path|${file.lastModified()}|${file.length()}"
+        val ext = path.substringAfterLast('.').lowercase()
+        val fmt = when (ext) {
+            "otf" -> "opentype"
+            "woff" -> "woff"
+            "woff2" -> "woff2"
+            else -> "truetype"
+        }
+        val mime = when (ext) {
+            "otf" -> "font/otf"
+            "woff" -> "font/woff"
+            "woff2" -> "font/woff2"
+            else -> "font/ttf"
+        }
+        val seq = ++fontStreamSeq
+        viewLifecycleOwner.lifecycleScope.launch {
+            val already = runCatching {
+                navigator.evaluateJavascript(
+                    "!!(window.__tbFontKey === ${jsStr(key)} && !!document.getElementById('talebook-reader-fontface-css'))"
+                )
+            }.getOrNull()
+            if (seq != fontStreamSeq) return@launch
+            if (already == "true") return@launch
+            runCatching {
+                navigator.evaluateJavascript(
+                    "window.__tbFontKey=null;window.__tbFont={parts:[],key:${jsStr(key)},fmt:${jsStr(fmt)},mime:${jsStr(mime)},done:false};'ok'"
+                )
+                file.inputStream().use { input ->
+                    val buf = ByteArray(300 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        if (seq != fontStreamSeq) return@use
+                        val b64 = if (n == buf.size) {
+                            android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
+                        } else {
+                            android.util.Base64.encodeToString(buf, 0, n, android.util.Base64.NO_WRAP)
+                        }
+                        navigator.evaluateJavascript(
+                            "(function(){var s=${jsStr(b64)};var bin=atob(s);var a=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);window.__tbFont.parts.push(a);})()"
+                        )
+                    }
+                }
+                if (seq != fontStreamSeq) return@launch
+                navigator.evaluateJavascript(
+                    """
+                    (function(){
+                        var f=window.__tbFont;
+                        if(!f||f.key!==${jsStr(key)})return 'stale';
+                        var blob=new Blob(f.parts,{type:f.mime});
+                        f.parts=[];
+                        var url=URL.createObjectURL(blob);
+                        var css="@font-face{font-family:'talebook-custom';src:url("+url+") format('"+f.fmt+"');font-display:swap;}";
+                        var old=document.getElementById('talebook-reader-fontface-css');
+                        if(old)old.remove();
+                        var st=document.createElement('style');
+                        st.id='talebook-reader-fontface-css';
+                        st.textContent=css;
+                        (document.head||document.documentElement).appendChild(st);
+                        window.__tbFontKey=f.key;
+                        window.__tbFont=null;
+                        return 'done';
+                    })();
+                    """.trimIndent()
+                )
+            }.onFailure { e ->
+                Log.w("TaleReadium", "Font stream failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun jsStr(s: String): String =
+        "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ") + "'"
+
     private fun publisherFontFamilyCss(fontFamily: ReaderFontFamily): String = when (fontFamily) {
         ReaderFontFamily.SERIF -> "serif"
         ReaderFontFamily.MONOSPACE -> "monospace"
         ReaderFontFamily.DEFAULT,
         ReaderFontFamily.SANS_SERIF -> "sans-serif"
+        ReaderFontFamily.CUSTOM -> "'talebook-custom'"
     }
 
     private fun readiumColorOrNull(rgb: Long): ReadiumColor? {
@@ -802,6 +956,70 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         ((rgb shr 8) and 0xFF).toInt(),
         (rgb and 0xFF).toInt()
     )
+
+    private fun persistEpubPrefsIfReady(navigator: EpubNavigatorFragment) {
+        runCatching {
+            val session = ReadiumSessionStore.get(sessionId) ?: return@runCatching
+            val settings = session.displaySettings
+            val repo = SettingsRepository(requireContext().applicationContext)
+            viewLifecycleOwner.lifecycleScope.launch {
+                repo.saveReaderDisplaySettings(
+                    fontScale = settings.fontScale,
+                    fontFamily = when (settings.fontFamily) {
+                        ReaderFontFamily.DEFAULT -> "default"
+                        ReaderFontFamily.SERIF -> "serif"
+                        ReaderFontFamily.SANS_SERIF -> "sans_serif"
+                        ReaderFontFamily.MONOSPACE -> "monospace"
+                        ReaderFontFamily.CUSTOM -> "custom"
+                    },
+                    lineHeight = settings.lineHeight,
+                    brightness = settings.brightness,
+                    scrollMode = settings.scrollMode,
+                    useSystemBrightness = settings.useSystemBrightness,
+                    theme = when (settings.theme) {
+                        ReaderTheme.SYSTEM -> "system"
+                        ReaderTheme.LIGHT -> "light"
+                        ReaderTheme.SEPIA -> "sepia"
+                        ReaderTheme.DARK -> "dark"
+                        ReaderTheme.PINK -> "pink"
+                        ReaderTheme.BLUE -> "blue"
+                        ReaderTheme.GREEN -> "green"
+                        ReaderTheme.CUSTOM -> "custom"
+                    },
+                    tapPageTurn = settings.tapPageTurn,
+                    pageTurnMode = when (settings.pageTurnMode) {
+                        ReaderPageTurnMode.INVERTED_L -> "inverted_l"
+                        ReaderPageTurnMode.LEFT_RIGHT -> "left_right"
+                        ReaderPageTurnMode.RIGHT_ONLY -> "right_only"
+                        ReaderPageTurnMode.DISABLED -> "disabled"
+                    },
+                    pageMargins = settings.pageMargins,
+                    pageMarginVertical = settings.pageMarginVertical,
+                    paragraphSpacing = settings.paragraphSpacing,
+                    letterSpacing = settings.letterSpacing,
+                    publisherStyles = settings.publisherStyles,
+                    forcePublisherFonts = settings.forcePublisherFonts,
+                    keepScreenOn = settings.keepScreenOn,
+                    pageAnimation = when (settings.pageAnimation) {
+                        ReaderPageAnimation.SMOOTH -> "smooth"
+                        ReaderPageAnimation.SLIDE -> "slide"
+                        ReaderPageAnimation.COVER -> "cover"
+                        ReaderPageAnimation.OVERRIDE -> "override"
+                        ReaderPageAnimation.NONE -> "none"
+                    },
+                    forceTapAnimation = settings.forceTapAnimation,
+                    scrollTapPageTurn = settings.scrollTapPageTurn,
+                    scrollKeepLine = settings.scrollKeepLine,
+                    volumeKeyPageTurn = settings.volumeKeyPageTurn,
+                    twoPageMode = settings.twoPageMode,
+                    customFontPath = settings.customFontPath,
+                    customFontName = settings.customFontName,
+                )
+            }
+        }.onFailure { e ->
+            Log.w("TaleReadium", "persistEpubPrefs failed: ${e.message}")
+        }
+    }
 
     private fun stabilizeInitialLayout(view: View) {
         view.post {

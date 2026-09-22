@@ -147,13 +147,18 @@ data class ReaderDisplaySettings(
     val readerTextColor: Long = 0x00000000L,
     val customThemeEnabled: Boolean = false,
     val twoPageMode: Boolean = false,
+    val dayTextureId: String = "",
+    val nightTextureId: String = "",
+    val customFontPath: String = "",
+    val customFontName: String = "",
 )
 
 enum class ReaderFontFamily {
     DEFAULT,
     SERIF,
     SANS_SERIF,
-    MONOSPACE
+    MONOSPACE,
+    CUSTOM
 }
 
 enum class ReaderTheme {

@@ -683,7 +683,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.3.1",
+                text = "Tale Book v2.3.2",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -1057,6 +1057,13 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                ChangelogSection(
+                    version = "2.3.2",
+                    items = listOf(
+                        "阅读背景增加纹理选择（白天/黑夜可独立设置）。",
+                        "字体设置支持上传自定义 ttf/otf/woff/woff2 字体。"
+                    )
+                )
                 ChangelogSection(
                     version = "2.3.1",
                     items = listOf(

@@ -102,6 +102,11 @@ class SettingsRepository(private val context: Context) {
         private val READER_BACKGROUND_COLOR_KEY = stringPreferencesKey("reader_background_color")
         private val READER_TEXT_COLOR_KEY = stringPreferencesKey("reader_text_color")
         private val READER_CUSTOM_THEME_ENABLED_KEY = booleanPreferencesKey("reader_custom_theme_enabled")
+        private val READER_DAY_TEXTURE_KEY = stringPreferencesKey("reader_day_texture")
+        private val READER_NIGHT_TEXTURE_KEY = stringPreferencesKey("reader_night_texture")
+        private val READER_CUSTOM_FONT_PATH_KEY = stringPreferencesKey("reader_custom_font_path")
+        private val READER_CUSTOM_FONT_NAME_KEY = stringPreferencesKey("reader_custom_font_name")
+        private val READER_EPUB_PREFS_JSON_KEY = stringPreferencesKey("reader_epub_prefs_json")
         private val TTS_SPEECH_RATE_KEY = floatPreferencesKey("tts_speech_rate")
         private val TTS_PITCH_KEY = floatPreferencesKey("tts_pitch")
         private val TTS_VOICE_NAME_KEY = stringPreferencesKey("tts_voice_name")
@@ -238,6 +243,26 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val readerCustomThemeEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_CUSTOM_THEME_ENABLED_KEY] ?: false
+    }
+
+    val readerDayTexture: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[READER_DAY_TEXTURE_KEY] ?: ""
+    }
+
+    val readerNightTexture: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[READER_NIGHT_TEXTURE_KEY] ?: ""
+    }
+
+    val readerCustomFontPath: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[READER_CUSTOM_FONT_PATH_KEY] ?: ""
+    }
+
+    val readerCustomFontName: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[READER_CUSTOM_FONT_NAME_KEY] ?: ""
+    }
+
+    val readerEpubPrefsJson: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[READER_EPUB_PREFS_JSON_KEY] ?: ""
     }
 
     val readerCacheLimitMb: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -646,6 +671,31 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         }
     }
 
+    suspend fun saveDayTexture(textureId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_DAY_TEXTURE_KEY] = textureId
+        }
+    }
+
+    suspend fun saveNightTexture(textureId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_NIGHT_TEXTURE_KEY] = textureId
+        }
+    }
+
+    suspend fun saveCustomFont(path: String, name: String) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_CUSTOM_FONT_PATH_KEY] = path
+            prefs[READER_CUSTOM_FONT_NAME_KEY] = name
+        }
+    }
+
+    suspend fun saveReaderEpubPrefsJson(json: String) {
+        context.dataStore.edit { prefs ->
+            prefs[READER_EPUB_PREFS_JSON_KEY] = json
+        }
+    }
+
     suspend fun saveSkipAuth(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[SKIP_AUTH_KEY] = enabled
@@ -745,12 +795,14 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         scrollKeepLine: Boolean,
         volumeKeyPageTurn: Boolean,
         forceTapAnimation: Boolean,
-        twoPageMode: Boolean
+        twoPageMode: Boolean,
+        customFontPath: String = "",
+        customFontName: String = ""
     ) {
         context.dataStore.edit { prefs ->
             prefs[READER_FONT_SCALE_KEY] = fontScale.coerceIn(0.5f, 3.0f)
             prefs[READER_FONT_FAMILY_KEY] = when (fontFamily) {
-                "default", "serif", "sans_serif", "monospace" -> fontFamily
+                "default", "serif", "sans_serif", "monospace", "custom" -> fontFamily
                 else -> "default"
             }
             prefs[READER_LINE_HEIGHT_KEY] = lineHeight.coerceIn(0.5f, 3.0f)
@@ -788,6 +840,8 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
             prefs[READER_VOLUME_KEY_PAGE_TURN_KEY] = volumeKeyPageTurn
             prefs[READER_FORCE_TAP_ANIMATION_KEY] = forceTapAnimation
             prefs[READER_TWO_PAGE_MODE_KEY] = twoPageMode
+            prefs[READER_CUSTOM_FONT_PATH_KEY] = customFontPath
+            prefs[READER_CUSTOM_FONT_NAME_KEY] = customFontName
         }
     }
 

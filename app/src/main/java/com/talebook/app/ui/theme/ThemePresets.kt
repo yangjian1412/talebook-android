@@ -9,7 +9,8 @@ data class ReaderThemePalette(
     val background: Long,
     val text: Long,
     val surface: Long,
-    val primary: Long
+    val primary: Long,
+    val textureResName: String? = null
 )
 
 data class AppAccentPalette(

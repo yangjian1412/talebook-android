@@ -3,12 +3,14 @@ package com.talebook.app.ui.screens
 import com.talebook.app.MainActivity
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +53,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BatteryStd
@@ -84,6 +87,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -104,6 +109,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -152,6 +158,10 @@ fun LocalReaderScreen(
     val nightPreset by settingsRepository.nightThemePreset.collectAsState(initial = ThemePresets.NIGHT_CHARCOAL)
     val customBackground by settingsRepository.dayCustomBackground.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.background)
     val customText by settingsRepository.dayCustomText.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text)
+    val dayTextureId by settingsRepository.readerDayTexture.collectAsState(initial = "")
+    val nightTextureId by settingsRepository.readerNightTexture.collectAsState(initial = "")
+    val customFontPath by settingsRepository.readerCustomFontPath.collectAsState(initial = "")
+    val customFontName by settingsRepository.readerCustomFontName.collectAsState(initial = "")
     val hideStatusBarInReader by settingsRepository.readerHideStatusBarInReader.collectAsState(initial = false)
     val hideTimeInReader by settingsRepository.readerHideTimeInReader.collectAsState(initial = false)
     val hideChapterPathInReader by settingsRepository.readerHideChapterPathInReader.collectAsState(initial = false)
@@ -212,6 +222,75 @@ fun LocalReaderScreen(
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
     var showCustomThemeDialog by remember { mutableStateOf(false) }
     var showPageMarginDialog by remember { mutableStateOf(false) }
+    var showTextureDialog by remember { mutableStateOf(false) }
+    var showFontMenu by remember { mutableStateOf(false) }
+    var customFontList by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    val ctx = LocalContext.current
+    LaunchedEffect(showFontMenu) {
+        if (showFontMenu) {
+            val fontsDir = java.io.File(ctx.filesDir, "fonts")
+            if (fontsDir.exists()) {
+                val files = fontsDir.listFiles { f ->
+                    val ext = f.extension.lowercase()
+                    ext == "ttf" || ext == "otf" || ext == "woff" || ext == "woff2"
+                }?.map { it.name to it.absolutePath }?.sortedBy { it.first } ?: emptyList()
+                customFontList = files
+            } else {
+                customFontList = emptyList()
+            }
+        }
+    }
+    val pickFontLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val fontsDir = java.io.File(ctx.filesDir, "fonts")
+            fontsDir.mkdirs()
+            val ext = ctx.contentResolver.getType(uri)?.let { mime ->
+                when {
+                    mime.contains("woff2") -> "woff2"
+                    mime.contains("woff") -> "woff"
+                    mime.contains("otf") -> "otf"
+                    mime.contains("ttf") || mime.contains("sfnt") -> "ttf"
+                    else -> "ttf"
+                }
+            } ?: "ttf"
+            val originalName = uri.lastPathSegment?.substringAfterLast('/') ?: "font_$ext"
+            val baseName = originalName.substringBeforeLast('.', originalName).ifEmpty { "font" }
+            val safeBase = baseName.replace(Regex("[^A-Za-z0-9_\\-\\u4e00-\\u9fff]"), "_").take(40)
+            val targetFile = java.io.File(fontsDir, "${safeBase}_${System.currentTimeMillis()}.$ext")
+            try {
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    targetFile.outputStream().use { input.copyTo(it) }
+                }
+                scope.launch {
+                    settingsRepository.saveCustomFont(targetFile.absolutePath, targetFile.name)
+                }
+                viewModel.updateReaderSettings(
+                    fontFamily = ReaderFontFamily.CUSTOM,
+                    customFontPath = targetFile.absolutePath,
+                    customFontName = targetFile.name
+                )
+                customFontList = (customFontList + (targetFile.name to targetFile.absolutePath)).distinctBy { it.second }
+            } catch (e: Exception) {
+                android.util.Log.e("TaleReader", "Font upload failed: ${e.message}")
+            }
+        }
+    }
+    val deleteCustomFont: (String) -> Unit = { path ->
+        try {
+            java.io.File(path).delete()
+        } catch (_: Exception) {}
+        scope.launch {
+            settingsRepository.saveCustomFont("", "")
+        }
+        viewModel.updateReaderSettings(
+            fontFamily = ReaderFontFamily.DEFAULT,
+            customFontPath = "",
+            customFontName = ""
+        )
+        customFontList = customFontList.filter { it.second != path }
+    }
     var previewBackground by remember(customBackground) { mutableStateOf(customBackground) }
     var previewText by remember(customText) { mutableStateOf(customText) }
     var showProgressJumpDialog by remember { mutableStateOf(false) }
@@ -1013,16 +1092,95 @@ if (showProgressJumpDialog) {
                             .horizontalScroll(rememberScrollState())
                     ) {
                         ReaderOptionChip("默认", readerSettings.fontFamily == ReaderFontFamily.DEFAULT) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.DEFAULT)
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.DEFAULT, customFontPath = "", customFontName = "")
                         }
                         ReaderOptionChip("宋体", readerSettings.fontFamily == ReaderFontFamily.SERIF) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SERIF)
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SERIF, customFontPath = "", customFontName = "")
                         }
                         ReaderOptionChip("黑体", readerSettings.fontFamily == ReaderFontFamily.SANS_SERIF) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SANS_SERIF)
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.SANS_SERIF, customFontPath = "", customFontName = "")
                         }
                         ReaderOptionChip("等宽", readerSettings.fontFamily == ReaderFontFamily.MONOSPACE) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.MONOSPACE)
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, fontFamily = ReaderFontFamily.MONOSPACE, customFontPath = "", customFontName = "")
+                        }
+                        ReaderOptionChip(
+                            label = if (readerSettings.fontFamily == ReaderFontFamily.CUSTOM && customFontName.isNotEmpty()) "自定义·${customFontName.substringBeforeLast('.')}" else "自定义",
+                            selected = readerSettings.fontFamily == ReaderFontFamily.CUSTOM
+                        ) {
+                            showFontMenu = true
+                        }
+                        DropdownMenu(
+                            expanded = showFontMenu,
+                            onDismissRequest = { showFontMenu = false },
+                            modifier = Modifier.fillMaxWidth(0.7f)
+                        ) {
+                            Text(
+                                text = "已上传字体",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (customFontList.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("（未上传）", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    onClick = {},
+                                    enabled = false
+                                )
+                            } else {
+                                customFontList.forEach { (name, path) ->
+                                    val isActive = readerSettings.fontFamily == ReaderFontFamily.CUSTOM && readerSettings.customFontPath == path
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                name,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
+                                        onClick = {
+                                            showFontMenu = false
+                                            viewModel.updateReaderSettings(
+                                                fontFamily = ReaderFontFamily.CUSTOM,
+                                                customFontPath = path,
+                                                customFontName = name
+                                            )
+                                        },
+                                        trailingIcon = {
+                                            androidx.compose.material3.IconButton(onClick = {
+                                                showFontMenu = false
+                                                deleteCustomFont(path)
+                                            }) {
+                                                androidx.compose.material3.Icon(
+                                                    androidx.compose.material.icons.Icons.Default.Delete,
+                                                    contentDescription = "删除"
+                                                )
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                            androidx.compose.material3.HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        androidx.compose.material3.Icon(
+                                            androidx.compose.material.icons.Icons.Default.Add,
+                                            contentDescription = null
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("上传字体（.ttf/.otf/.woff/.woff2）")
+                                    }
+                                },
+                                onClick = {
+                                    showFontMenu = false
+                                    pickFontLauncher.launch(arrayOf(
+                                        "font/ttf", "font/otf", "font/woff", "font/woff2",
+                                        "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt",
+                                        "*/*"
+                                    ))
+                                }
+                            )
                         }
                     }
                     Row(
@@ -1169,6 +1327,23 @@ if (showProgressJumpDialog) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text("阅读背景纹理")
+                        OutlinedButton(onClick = { showTextureDialog = true }) {
+                            Text(
+                                when {
+                                    effectiveDark && nightTextureId.isNotEmpty() -> "已选·$nightTextureId"
+                                    !effectiveDark && dayTextureId.isNotEmpty() -> "已选·$dayTextureId"
+                                    effectiveDark -> "未选（夜间）"
+                                    else -> "未选（白天）"
+                                }
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text("滚动模式")
                         CompactSwitch(
                             checked = readerSettings.scrollMode,
@@ -1269,6 +1444,64 @@ if (showProgressJumpDialog) {
                     viewModel.persistPageMargins()
                     showPageMarginDialog = false
                 }) { Text("关闭") }
+            }
+        )
+    }
+
+    if (showTextureDialog) {
+        AlertDialog(
+            onDismissRequest = { showTextureDialog = false },
+            title = { Text("阅读背景纹理") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "纹理会覆盖整个阅读区。白天/夜间自动切换对应颜色版本。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(if (effectiveDark) "当前：夜间（自动暗色）" else "当前：白天（自动亮色）")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("白天纹理")
+                        Text(
+                            if (dayTextureId.isEmpty()) "纯色" else dayTextureId,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    ReaderTexturePicker(
+                        selected = dayTextureId,
+                        variant = "light",
+                        onSelect = { id ->
+                            scope.launch { settingsRepository.saveDayTexture(id) }
+                            viewModel.updateReaderSettings(dayTextureId = id)
+                        }
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("夜间纹理")
+                        Text(
+                            if (nightTextureId.isEmpty()) "纯色" else nightTextureId,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    ReaderTexturePicker(
+                        selected = nightTextureId,
+                        variant = "dark",
+                        onSelect = { id ->
+                            scope.launch { settingsRepository.saveNightTexture(id) }
+                            viewModel.updateReaderSettings(nightTextureId = id)
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTextureDialog = false }) { Text("完成") }
             }
         )
     }
@@ -1922,6 +2155,66 @@ private fun ReaderThemePresetPicker(
                     text = preset.label,
                     style = MaterialTheme.typography.labelSmall,
                     color = if (preset.id == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderTexturePicker(
+    selected: String,
+    variant: String = "light",
+    onSelect: (String) -> Unit
+) {
+    val textures = remember {
+        listOf(
+            "" to "纯色",
+            "paper" to "纸纹",
+            "leather" to "牛皮"
+        )
+    }
+    val ctx = LocalContext.current
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        textures.forEach { (id, label) ->
+            val resName = if (id.isEmpty()) null else "bg_${id}_$variant"
+            val resId = resName?.let { ctx.resources.getIdentifier(resName, "drawable", ctx.packageName) } ?: 0
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(if (id == selected) 40.dp else 34.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (resId != 0) Color.Transparent
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .clickable { onSelect(id) }
+                        .border(
+                            width = if (id == selected) 2.dp else 1.dp,
+                            color = if (id == selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (resId != 0) {
+                        Image(
+                            painter = painterResource(resId),
+                            contentDescription = label,
+                            modifier = Modifier
+                                .size(if (id == selected) 32.dp else 28.dp)
+                                .clip(CircleShape),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    } else {
+                        Text("—", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (id == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

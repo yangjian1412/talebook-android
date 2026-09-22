@@ -42,4 +42,5 @@ Thumbs.db
 desktop.ini
 
 # Backup directories (not part of source)
-backup/
+backup/.tmp/
+background/

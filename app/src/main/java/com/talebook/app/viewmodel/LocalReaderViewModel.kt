@@ -106,7 +106,11 @@ data class LocalReaderUiState(
         readerBackgroundColor = 0x00000000L,
         readerTextColor = 0x00000000L,
         customThemeEnabled = false,
-        twoPageMode = false
+        twoPageMode = false,
+        dayTextureId = "",
+        nightTextureId = "",
+        customFontPath = "",
+        customFontName = ""
     )
 )
 
@@ -267,6 +271,10 @@ class LocalReaderViewModel : ViewModel() {
                                 readerTextColor = palette.text,
                                 customThemeEnabled = true,
                                 twoPageMode = settingsRepository.readerTwoPageMode.first(),
+                                dayTextureId = settingsRepository.readerDayTexture.first(),
+                                nightTextureId = settingsRepository.readerNightTexture.first(),
+                                customFontPath = settingsRepository.readerCustomFontPath.first(),
+                                customFontName = settingsRepository.readerCustomFontName.first(),
                             )
                             val ttsSettings = ReaderTtsState(
                                 speechRate = settingsRepository.ttsSpeechRate.first(),
@@ -552,6 +560,10 @@ pageMargins = settingsRepository.readerPageMargins.first(),
             readerTextColor = palette.text,
             customThemeEnabled = true,
             twoPageMode = settingsRepository.readerTwoPageMode.first(),
+            dayTextureId = settingsRepository.readerDayTexture.first(),
+            nightTextureId = settingsRepository.readerNightTexture.first(),
+            customFontPath = settingsRepository.readerCustomFontPath.first(),
+            customFontName = settingsRepository.readerCustomFontName.first(),
         )
     }
 
@@ -846,13 +858,13 @@ private suspend fun openReadiumSession(
     }
 
     fun updateReaderSettings(
-        fontScale: Float,
-        lineHeight: Float,
-        brightness: Float,
-        scrollMode: Boolean,
-        useSystemBrightness: Boolean,
-        theme: ReaderTheme,
-        tapPageTurn: Boolean,
+        fontScale: Float = _uiState.value.readerSettings.fontScale,
+        lineHeight: Float = _uiState.value.readerSettings.lineHeight,
+        brightness: Float = _uiState.value.readerSettings.brightness,
+        scrollMode: Boolean = _uiState.value.readerSettings.scrollMode,
+        useSystemBrightness: Boolean = _uiState.value.readerSettings.useSystemBrightness,
+        theme: ReaderTheme = _uiState.value.readerSettings.theme,
+        tapPageTurn: Boolean = _uiState.value.readerSettings.tapPageTurn,
         fontFamily: ReaderFontFamily = _uiState.value.readerSettings.fontFamily,
         pageTurnMode: ReaderPageTurnMode = _uiState.value.readerSettings.pageTurnMode,
         pageMargins: Float = _uiState.value.readerSettings.pageMargins,
@@ -872,6 +884,10 @@ private suspend fun openReadiumSession(
         customThemeEnabled: Boolean = _uiState.value.readerSettings.customThemeEnabled,
         twoPageMode: Boolean = _uiState.value.readerSettings.twoPageMode,
         appDark: Boolean = _uiState.value.readerSettings.appDark,
+        dayTextureId: String = _uiState.value.readerSettings.dayTextureId,
+        nightTextureId: String = _uiState.value.readerSettings.nightTextureId,
+        customFontPath: String = _uiState.value.readerSettings.customFontPath,
+        customFontName: String = _uiState.value.readerSettings.customFontName,
         persist: Boolean = true,
     ) {
         val settings = ReaderDisplaySettings(
@@ -901,6 +917,10 @@ private suspend fun openReadiumSession(
             readerTextColor = readerTextColor and 0xFFFFFFFFL,
             customThemeEnabled = customThemeEnabled,
             twoPageMode = twoPageMode,
+            dayTextureId = dayTextureId,
+            nightTextureId = nightTextureId,
+            customFontPath = customFontPath,
+            customFontName = customFontName,
         )
         val previous = _uiState.value.readerSettings
         _uiState.update { it.copy(readerSettings = settings) }
@@ -939,7 +959,9 @@ private suspend fun openReadiumSession(
                 scrollTapPageTurn = settings.scrollTapPageTurn,
                 scrollKeepLine = settings.scrollKeepLine,
                 volumeKeyPageTurn = settings.volumeKeyPageTurn,
-                twoPageMode = settings.twoPageMode
+                twoPageMode = settings.twoPageMode,
+                customFontPath = settings.customFontPath,
+                customFontName = settings.customFontName
             )
             repo.saveReaderCustomColors(settings.readerBackgroundColor, settings.readerTextColor, settings.customThemeEnabled)
         }
@@ -1362,6 +1384,7 @@ private fun String.toReaderFontFamily(): ReaderFontFamily = when (this) {
     "serif" -> ReaderFontFamily.SERIF
     "sans_serif" -> ReaderFontFamily.SANS_SERIF
     "monospace" -> ReaderFontFamily.MONOSPACE
+    "custom" -> ReaderFontFamily.CUSTOM
     else -> ReaderFontFamily.DEFAULT
 }
 
@@ -1370,6 +1393,7 @@ private fun ReaderFontFamily.toStorageValue(): String = when (this) {
     ReaderFontFamily.SERIF -> "serif"
     ReaderFontFamily.SANS_SERIF -> "sans_serif"
     ReaderFontFamily.MONOSPACE -> "monospace"
+    ReaderFontFamily.CUSTOM -> "custom"
 }
 
 private fun String.toReaderPageAnimation(): ReaderPageAnimation = when (this) {
