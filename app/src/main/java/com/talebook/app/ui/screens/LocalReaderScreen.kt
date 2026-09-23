@@ -452,6 +452,10 @@ fun LocalReaderScreen(
         }
     }
 
+    val activePresetId = if (effectiveDark) nightPreset else dayPreset
+    val activePreset = (if (effectiveDark) ThemePresets.night else ThemePresets.day)
+        .firstOrNull { it.id == activePresetId }
+    val isImagePreset = activePreset?.imageResName != null
     val currentReaderBackgroundLong = if (readerSettings.readerBackgroundColor != 0L) {
         readerSettings.readerBackgroundColor
     } else {
@@ -462,6 +466,7 @@ fun LocalReaderScreen(
         }
     }
     val currentReaderBackground = currentReaderBackgroundLong.toColor()
+    val composableBackgroundColor = if (isImagePreset) Color.Transparent else currentReaderBackground
     val currentReaderTextLong = if (readerSettings.readerTextColor != 0L) {
         readerSettings.readerTextColor
     } else {
@@ -472,10 +477,6 @@ fun LocalReaderScreen(
         }
     }
     val currentReaderText = currentReaderTextLong.toColor()
-    val activePresetId = if (effectiveDark) nightPreset else dayPreset
-    val activePreset = (if (effectiveDark) ThemePresets.night else ThemePresets.day)
-        .firstOrNull { it.id == activePresetId }
-    val isImagePreset = activePreset?.imageResName != null
     val topBarColor = when {
         isImagePreset -> Color.Transparent
         barsVisible -> MaterialTheme.colorScheme.surface
@@ -497,12 +498,24 @@ fun LocalReaderScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(currentReaderBackground)
+            .background(composableBackgroundColor)
     ) {
+        if (isImagePreset && activePreset != null) {
+            val bgResId = activePreset.imageResName?.let {
+                ctx.resources.getIdentifier(it, "drawable", ctx.packageName)
+            } ?: 0
+            if (bgResId != 0) {
+                Image(
+                    painter = painterResource(bgResId),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.FillBounds
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(currentReaderBackground)
         ) {
             when {
                 uiState.isLoading -> {
@@ -572,23 +585,31 @@ fun LocalReaderScreen(
                                         top = if (readerSettings.scrollMode) 32.dp else readerSafeTopPadding + 24.dp,
                                         bottom = 48.dp
                                     )
-                                    .background(currentReaderBackground),
+                                    .background(if (isImagePreset) Color.Transparent else currentReaderBackground),
                                 factory = { ctx ->
                                     FrameLayout(ctx).apply {
                                         id = containerId
-                                        setBackgroundColor(android.graphics.Color.rgb(
+                                        if (isImagePreset) {
+                                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                        } else {
+                                            setBackgroundColor(android.graphics.Color.rgb(
+                                                ((currentReaderBackgroundLong shr 16) and 0xFF).toInt(),
+                                                ((currentReaderBackgroundLong shr 8) and 0xFF).toInt(),
+                                                (currentReaderBackgroundLong and 0xFF).toInt()
+                                            ))
+                                        }
+                                    }
+                                },
+                                update = {
+                                    if (isImagePreset) {
+                                        it.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                    } else {
+                                        it.setBackgroundColor(android.graphics.Color.rgb(
                                             ((currentReaderBackgroundLong shr 16) and 0xFF).toInt(),
                                             ((currentReaderBackgroundLong shr 8) and 0xFF).toInt(),
                                             (currentReaderBackgroundLong and 0xFF).toInt()
                                         ))
                                     }
-                                },
-                                update = {
-                                    it.setBackgroundColor(android.graphics.Color.rgb(
-                                        ((currentReaderBackgroundLong shr 16) and 0xFF).toInt(),
-                                        ((currentReaderBackgroundLong shr 8) and 0xFF).toInt(),
-                                        (currentReaderBackgroundLong and 0xFF).toInt()
-                                    ))
                                     val tag = ReadiumHostFragment.tag(uiState.sessionId!!)
                                     if (activity.supportFragmentManager.findFragmentByTag(tag) == null) {
                                         activity.supportFragmentManager.beginTransaction()
@@ -665,6 +686,7 @@ fun LocalReaderScreen(
                         showProgressJumpDialog = true
                     },
                     chapterPath = if (hideChapterPathInReader) "" else uiState.currentChapterPath,
+                    transparent = isImagePreset,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
@@ -2040,12 +2062,16 @@ private fun ReaderBottomBar(
     onTts: () -> Unit,
     onProgressClick: () -> Unit,
     chapterPath: String = "",
+    transparent: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+            .background(
+                if (transparent) Color.Transparent
+                else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+            )
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         ReaderProgressOverlay(

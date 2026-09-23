@@ -56,8 +56,6 @@ private var lastChapterName: String = ""
     private var lastTwoPageActive: Boolean? = null
     private var lastAvoidLargePublisherFonts: Boolean? = null
     private var lastFontFamily: ReaderFontFamily? = null
-    private var lastBgImageRes: String = ""
-    private var bgImageStreamSeq = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -93,9 +91,15 @@ private var lastChapterName: String = ""
     ): View = FrameLayout(requireContext()).apply {
         id = containerId
         val session = ReadiumSessionStore.get(sessionId)
-        val dark = session?.displaySettings?.appDark == true
-        val activeBg = resolveActiveBackground(session?.displaySettings?.readerBackgroundColor, dark)
-        setBackgroundColor(rgbToColor(activeBg))
+        val settings = session?.displaySettings
+        val isImage = settings?.let { resolveActivePalette(it)?.imageResName?.isNotEmpty() } == true
+        if (isImage) {
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        } else {
+            val dark = settings?.appDark == true
+            val activeBg = resolveActiveBackground(settings?.readerBackgroundColor, dark)
+            setBackgroundColor(rgbToColor(activeBg))
+        }
         layoutParams = ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -125,10 +129,16 @@ private var lastChapterName: String = ""
         return org.readium.r2.navigator.epub.EpubNavigatorFragment.Configuration()
     }
 
+    private var transparencyWatchJob: kotlinx.coroutines.Job? = null
+
     private fun setupNavigator(view: View, session: ReadiumSession) {
         val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
         applyReaderSettings(session, navigator, session.displaySettings)
         stabilizeInitialLayout(view)
+        if (isImagePresetForSettings(session.displaySettings)) {
+            setNavigatorWebViewTransparent(navigator)
+        }
+        startImageTransparencyWatch(navigator)
         view.post {
             if (!isAdded || view == null) return@post
             val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment ?: return@post
@@ -335,6 +345,9 @@ private var lastChapterName: String = ""
             injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
             injectCustomFontCss(navigator, session.displaySettings)
             injectBackgroundImageCss(navigator, session.displaySettings)
+            if (isImagePresetForSettings(session.displaySettings)) {
+                setNavigatorWebViewTransparent(navigator)
+            }
         }
     }
 
@@ -671,9 +684,12 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             }
             val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             val twoPageActive = settings.twoPageMode && isLandscape
+            val imagePreset = isImagePresetForSettings(settings)
             navigator.submitPreferences(
                 EpubPreferences(
-                    backgroundColor = readiumColorOrNull(settings.readerBackgroundColor),
+                    // Alpha 0: R2ViewPager.setBackgroundColor receives the raw ARGB int (transparent),
+                    // while Color.toCss masks to #RRGGBB for HTML (handled by injectBackgroundImageCss).
+                    backgroundColor = if (imagePreset) ReadiumColor(android.graphics.Color.TRANSPARENT) else readiumColorOrNull(settings.readerBackgroundColor),
                     fontFamily = readiumFontFamily,
                     fontSize = settings.fontScale.toDouble(),
                     letterSpacing = settings.letterSpacing.takeIf { it > 0f }?.toDouble(),
@@ -693,6 +709,11 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
     }
 
     private fun applyBackground(settings: ReaderDisplaySettings) {
+        if (isImagePresetForSettings(settings)) {
+            view?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            activity?.window?.decorView?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            return
+        }
         val activeBg = resolveActiveBackground(settings.readerBackgroundColor, settings.appDark)
         val color = rgbToColor(activeBg)
         view?.setBackgroundColor(color)
@@ -796,82 +817,32 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
     private fun injectBackgroundImageCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
         val palette = resolveActivePalette(settings)
         val resName = palette?.imageResName
-        Log.d("TaleReadium", "injectBackgroundImageCss: day=${settings.dayPresetId} night=${settings.nightPresetId} appDark=${settings.appDark} res=$resName")
-        if (resName.isNullOrEmpty()) {
-            bgImageStreamSeq++
-            lastBgImageRes = ""
-            viewLifecycleOwner.lifecycleScope.launch {
-                runCatching {
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                if (resName.isNullOrEmpty()) {
                     navigator.evaluateJavascript(
-                        "window.__tbBgKey=null;window.__tbBgParts=null;if(window.__tbBgUrl){URL.revokeObjectURL(window.__tbBgUrl);window.__tbBgUrl=null;}var old=document.getElementById('talebook-reader-bgimage-css');if(old)old.remove();var div=document.getElementById('tb-bg');if(div)div.remove();'ok'"
+                        "var old=document.getElementById('talebook-reader-bgimage-css');if(old)old.remove();'ok'"
+                    )
+                } else {
+                    // Beat ReadiumCSS-before.css :root{background-color:var(--RS__backgroundColor)!important}
+                    // and after.css :root[style*="--USER__backgroundColor"] (0,2,0).
+                    // Style tag is appended after Readium's links, so equal-specificity !important wins.
+                    // Inline --USER__backgroundColor from html[style] loses to stylesheet !important.
+                    val css = buildString {
+                        append(":root,:root[style],html{background-color:transparent !important;background-image:none !important;")
+                        append("--RS__backgroundColor:transparent !important;--USER__backgroundColor:transparent !important;}")
+                        append(":root[style*=\"--USER__backgroundColor\"],:root[style*=\"--USER__backgroundColor\"] *{background-color:transparent !important;background-image:none !important;}")
+                        append(":root[style*=\"readium-sepia-on\"],:root[style*=\"readium-night-on\"]{--RS__backgroundColor:transparent !important;}")
+                        append("html body,body,html body *,body *{background-color:transparent !important;background-image:none !important;}")
+                    }
+                    val escaped = css.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+                    navigator.evaluateJavascript(
+                        "(function(){var s=document.getElementById('talebook-reader-bgimage-css');" +
+                            "if(!s){s=document.createElement('style');s.id='talebook-reader-bgimage-css';" +
+                            "(document.head||document.documentElement).appendChild(s);}" +
+                            "s.textContent='$escaped';return 'ok';})()"
                     )
                 }
-            }
-            return
-        }
-        val seq = ++bgImageStreamSeq
-        viewLifecycleOwner.lifecycleScope.launch {
-            val ready = runCatching {
-                navigator.evaluateJavascript(
-                    "!!(window.__tbBgKey === ${jsStr(resName)} && !!document.getElementById('talebook-reader-bgimage-css'))"
-                )
-            }.getOrNull()
-            if (seq != bgImageStreamSeq) return@launch
-            if (ready == "true") return@launch
-            val resId = resources.getIdentifier(resName, "drawable", requireContext().packageName)
-            if (resId == 0) {
-                Log.w("TaleReadium", "Background image resource not found: $resName")
-                return@launch
-            }
-            Log.d("TaleReadium", "Streaming background image: $resName resId=$resId")
-            runCatching {
-                navigator.evaluateJavascript(
-                    "if(window.__tbBgUrl){URL.revokeObjectURL(window.__tbBgUrl);}window.__tbBgUrl=null;window.__tbBgKey=${jsStr(resName)};'ok'"
-                )
-                resources.openRawResource(resId).use { input ->
-                    val buf = ByteArray(300 * 1024)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n <= 0) break
-                        if (seq != bgImageStreamSeq) return@use
-                        val b64 = if (n == buf.size) {
-                            android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
-                        } else {
-                            android.util.Base64.encodeToString(buf, 0, n, android.util.Base64.NO_WRAP)
-                        }
-                        navigator.evaluateJavascript(
-                            "(function(){var s=${jsStr(b64)};var bin=atob(s);var a=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);window.__tbBgParts=window.__tbBgParts||[];window.__tbBgParts.push(a);})()"
-                        )
-                    }
-                }
-                if (seq != bgImageStreamSeq) return@launch
-                navigator.evaluateJavascript(
-                    """
-                    (function(){
-                        var parts=window.__tbBgParts||[];
-                        var blob=new Blob(parts,{type:'image/jpeg'});
-                        window.__tbBgParts=null;
-                        var url=URL.createObjectURL(blob);
-                        window.__tbBgUrl=url;
-                        var css="html{background-image:url("+url+") !important;background-size:100% 100% !important;background-repeat:no-repeat !important;background-attachment:fixed !important;background-position:center center !important;height:100vh !important;min-height:100vh !important;margin:0 !important;padding:0 !important;}body{background-color:transparent !important;background-image:none !important;min-height:100vh !important;}#tb-bg{position:fixed !important;top:0 !important;left:0 !important;width:100vw !important;height:100vh !important;background-image:url("+url+") !important;background-size:100% 100% !important;background-repeat:no-repeat !important;background-position:center center !important;z-index:-1 !important;pointer-events:none !important;display:block !important;}";
-                        var old=document.getElementById('talebook-reader-bgimage-css');
-                        if(old)old.remove();
-                        var st=document.createElement('style');
-                        st.id='talebook-reader-bgimage-css';
-                        st.textContent=css;
-                        (document.head||document.documentElement).appendChild(st);
-                        var oldDiv=document.getElementById('tb-bg');
-                        if(oldDiv)oldDiv.remove();
-                        var div=document.createElement('div');
-                        div.id='tb-bg';
-                        (document.body||document.documentElement).appendChild(div);
-                        return 'done';
-                    })();
-                    """.trimIndent()
-                )
-                lastBgImageRes = resName
-            }.onFailure { e ->
-                Log.w("TaleReadium", "Background image stream failed: ${e.message}")
             }
         }
     }
@@ -885,6 +856,43 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         } else {
             com.talebook.app.ui.theme.ThemePresets.day.firstOrNull { it.id == dayPreset }
                 ?: com.talebook.app.ui.theme.ThemePresets.day.first()
+        }
+    }
+
+    private fun isImagePresetForSettings(settings: ReaderDisplaySettings): Boolean {
+        return resolveActivePalette(settings)?.imageResName?.isNotEmpty() == true
+    }
+
+    private fun setNavigatorWebViewTransparent(navigator: Navigator) {
+        val root = (navigator as? VisualNavigator)?.publicationView ?: return
+        root.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        makeAllChildrenTransparent(root)
+    }
+
+    private fun startImageTransparencyWatch(navigator: Navigator) {
+        val epub = navigator as? EpubNavigatorFragment ?: return
+        transparencyWatchJob?.cancel()
+        transparencyWatchJob = viewLifecycleOwner.lifecycleScope.launch {
+            epub.settings.collect {
+                val settings = ReadiumSessionStore.get(sessionId)?.displaySettings ?: return@collect
+                if (isImagePresetForSettings(settings)) {
+                    // Readium re-applies R2ViewPager background on settings change; re-force transparent after it.
+                    setNavigatorWebViewTransparent(epub)
+                    view?.post { setNavigatorWebViewTransparent(epub) }
+                }
+            }
+        }
+    }
+
+    private fun makeAllChildrenTransparent(view: View) {
+        view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        if (view is android.webkit.WebView) {
+            view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                makeAllChildrenTransparent(view.getChildAt(i))
+            }
         }
     }
 
