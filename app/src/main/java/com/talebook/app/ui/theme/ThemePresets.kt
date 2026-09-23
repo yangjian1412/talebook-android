@@ -10,7 +10,7 @@ data class ReaderThemePalette(
     val text: Long,
     val surface: Long,
     val primary: Long,
-    val textureResName: String? = null
+    val imageResName: String? = null
 )
 
 data class AppAccentPalette(
@@ -27,12 +27,16 @@ object ThemePresets {
     const val DAY_BLUE = "blue"
     const val DAY_GREEN = "green"
     const val DAY_CUSTOM = "custom"
+    const val DAY_PAPER = "day_paper"
+    const val DAY_OLD_PAPER = "day_old_paper"
+    const val DAY_PARCHMENT = "day_parchment"
 
     const val NIGHT_CHARCOAL = "charcoal"
     const val NIGHT_SYSTEM = "night_system"
     const val NIGHT_WARM = "warm"
     const val NIGHT_BLUE = "midnight"
     const val NIGHT_GREEN = "forest"
+    const val NIGHT_IMAGE = "night_image"
 
     val accents = listOf(
         AppAccentPalette("blue", "深蓝", 0xFF2D5F9AL, 0xFFAFC7E8L),
@@ -56,7 +60,10 @@ object ThemePresets {
         ReaderThemePalette(DAY_PINK, "浅粉", 0xFFFFF0F3L, 0xFF4A2C35L, 0xFFFFF8F9L, 0xFFC65A78L),
         ReaderThemePalette(DAY_BLUE, "浅蓝", 0xFFF0F5FFL, 0xFF25364AL, 0xFFF8FBFFL, 0xFF4F75B8L),
         ReaderThemePalette(DAY_GREEN, "浅绿", 0xFFF0FAF0L, 0xFF263D2AL, 0xFFF8FFF8L, 0xFF4F8A59L),
-        ReaderThemePalette(DAY_CUSTOM, "自定义", 0xFFF8F5EEL, 0xFF2B2B2BL, 0xFFFFFCF5L, 0xFF8A6B3EL)
+        ReaderThemePalette(DAY_CUSTOM, "自定义", 0xFFF8F5EEL, 0xFF2B2B2BL, 0xFFFFFCF5L, 0xFF8A6B3EL),
+        ReaderThemePalette(DAY_PAPER, "纸张", 0xFFF6F1E3L, 0xFF2B2B2BL, 0xFFFAF6EAL, 0xFF8A6B3EL, "bg_image_paper"),
+        ReaderThemePalette(DAY_OLD_PAPER, "旧纸", 0xFFE8D9B0L, 0xFF3A2C18L, 0xFFEFE0C2L, 0xFF8A6B3EL, "bg_image_old_paper"),
+        ReaderThemePalette(DAY_PARCHMENT, "羊皮", 0xFFEDE0C0L, 0xFF3A2A14L, 0xFFF3E7C9L, 0xFF8A6B3EL, "bg_image_parchment")
     )
 
     val night = listOf(
@@ -64,7 +71,8 @@ object ThemePresets {
         ReaderThemePalette(NIGHT_CHARCOAL, "炭黑", 0xFF181A1BL, 0xFF969088L, 0xFF242729L, 0xFF9DB7F5L),
         ReaderThemePalette(NIGHT_WARM, "暖夜", 0xFF201B17L, 0xFFA89A8EL, 0xFF2B241EL, 0xFFD0A56AL),
         ReaderThemePalette(NIGHT_BLUE, "深蓝", 0xFF111A24L, 0xFFA1ADBAL, 0xFF1B2633L, 0xFF8AB4F8L),
-        ReaderThemePalette(NIGHT_GREEN, "墨绿", 0xFF111D18L, 0xFF9BAEA3L, 0xFF1A2921L, 0xFF8FC9A8L)
+        ReaderThemePalette(NIGHT_GREEN, "墨绿", 0xFF111D18L, 0xFF9BAEA3L, 0xFF1A2921L, 0xFF8FC9A8L),
+        ReaderThemePalette(NIGHT_IMAGE, "图片", 0xFF0F1A28L, 0xFFE8F0FFL, 0xFF152236L, 0xFF7FB3FFL, "bg_image_night")
     )
 
     fun isDark(mode: String, systemDark: Boolean): Boolean = when (mode) {

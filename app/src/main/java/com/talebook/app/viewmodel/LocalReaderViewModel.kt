@@ -107,8 +107,6 @@ data class LocalReaderUiState(
         readerTextColor = 0x00000000L,
         customThemeEnabled = false,
         twoPageMode = false,
-        dayTextureId = "",
-        nightTextureId = "",
         customFontPath = "",
         customFontName = ""
     )
@@ -267,12 +265,12 @@ class LocalReaderViewModel : ViewModel() {
                                 scrollKeepLine = settingsRepository.readerScrollKeepLine.first(),
                                 volumeKeyPageTurn = settingsRepository.readerVolumeKeyPageTurn.first(),
                                 letterSpacing = settingsRepository.readerLetterSpacing.first(),
+                                dayPresetId = settingsRepository.dayThemePreset.first(),
+                                nightPresetId = settingsRepository.nightThemePreset.first(),
                                 readerBackgroundColor = palette.background,
                                 readerTextColor = palette.text,
                                 customThemeEnabled = true,
                                 twoPageMode = settingsRepository.readerTwoPageMode.first(),
-                                dayTextureId = settingsRepository.readerDayTexture.first(),
-                                nightTextureId = settingsRepository.readerNightTexture.first(),
                                 customFontPath = settingsRepository.readerCustomFontPath.first(),
                                 customFontName = settingsRepository.readerCustomFontName.first(),
                             )
@@ -556,12 +554,12 @@ pageMargins = settingsRepository.readerPageMargins.first(),
             scrollKeepLine = settingsRepository.readerScrollKeepLine.first(),
             volumeKeyPageTurn = settingsRepository.readerVolumeKeyPageTurn.first(),
             letterSpacing = settingsRepository.readerLetterSpacing.first(),
+            dayPresetId = settingsRepository.dayThemePreset.first(),
+            nightPresetId = settingsRepository.nightThemePreset.first(),
             readerBackgroundColor = palette.background,
             readerTextColor = palette.text,
             customThemeEnabled = true,
             twoPageMode = settingsRepository.readerTwoPageMode.first(),
-            dayTextureId = settingsRepository.readerDayTexture.first(),
-            nightTextureId = settingsRepository.readerNightTexture.first(),
             customFontPath = settingsRepository.readerCustomFontPath.first(),
             customFontName = settingsRepository.readerCustomFontName.first(),
         )
@@ -884,10 +882,10 @@ private suspend fun openReadiumSession(
         customThemeEnabled: Boolean = _uiState.value.readerSettings.customThemeEnabled,
         twoPageMode: Boolean = _uiState.value.readerSettings.twoPageMode,
         appDark: Boolean = _uiState.value.readerSettings.appDark,
-        dayTextureId: String = _uiState.value.readerSettings.dayTextureId,
-        nightTextureId: String = _uiState.value.readerSettings.nightTextureId,
         customFontPath: String = _uiState.value.readerSettings.customFontPath,
         customFontName: String = _uiState.value.readerSettings.customFontName,
+        dayPresetId: String = _uiState.value.readerSettings.dayPresetId,
+        nightPresetId: String = _uiState.value.readerSettings.nightPresetId,
         persist: Boolean = true,
     ) {
         val settings = ReaderDisplaySettings(
@@ -917,10 +915,10 @@ private suspend fun openReadiumSession(
             readerTextColor = readerTextColor and 0xFFFFFFFFL,
             customThemeEnabled = customThemeEnabled,
             twoPageMode = twoPageMode,
-            dayTextureId = dayTextureId,
-            nightTextureId = nightTextureId,
             customFontPath = customFontPath,
             customFontName = customFontName,
+            dayPresetId = dayPresetId,
+            nightPresetId = nightPresetId,
         )
         val previous = _uiState.value.readerSettings
         _uiState.update { it.copy(readerSettings = settings) }

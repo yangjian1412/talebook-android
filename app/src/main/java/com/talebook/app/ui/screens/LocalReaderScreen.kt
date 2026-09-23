@@ -82,6 +82,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -158,8 +159,6 @@ fun LocalReaderScreen(
     val nightPreset by settingsRepository.nightThemePreset.collectAsState(initial = ThemePresets.NIGHT_CHARCOAL)
     val customBackground by settingsRepository.dayCustomBackground.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.background)
     val customText by settingsRepository.dayCustomText.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text)
-    val dayTextureId by settingsRepository.readerDayTexture.collectAsState(initial = "")
-    val nightTextureId by settingsRepository.readerNightTexture.collectAsState(initial = "")
     val customFontPath by settingsRepository.readerCustomFontPath.collectAsState(initial = "")
     val customFontName by settingsRepository.readerCustomFontName.collectAsState(initial = "")
     val hideStatusBarInReader by settingsRepository.readerHideStatusBarInReader.collectAsState(initial = false)
@@ -222,7 +221,6 @@ fun LocalReaderScreen(
     var showAdvancedSettingsDialog by remember { mutableStateOf(false) }
     var showCustomThemeDialog by remember { mutableStateOf(false) }
     var showPageMarginDialog by remember { mutableStateOf(false) }
-    var showTextureDialog by remember { mutableStateOf(false) }
     var showFontMenu by remember { mutableStateOf(false) }
     var customFontList by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     val ctx = LocalContext.current
@@ -315,7 +313,7 @@ fun LocalReaderScreen(
             if (base.id == ThemePresets.DAY_CUSTOM) base.copy(background = customBackground, text = customText) else base
         }
     }
-    fun applyReaderPalette(palette: ReaderThemePalette, dark: Boolean = effectiveDark) {
+    fun applyReaderPalette(palette: ReaderThemePalette, dark: Boolean = effectiveDark, presetId: String = "") {
         val current = uiState.readerSettings
         viewModel.updateReaderSettings(
             fontScale = current.fontScale,
@@ -328,7 +326,9 @@ fun LocalReaderScreen(
             readerBackgroundColor = palette.background,
             readerTextColor = palette.text,
             customThemeEnabled = true,
-            appDark = dark
+            appDark = dark,
+            dayPresetId = if (!dark && presetId.isNotEmpty()) presetId else current.dayPresetId,
+            nightPresetId = if (dark && presetId.isNotEmpty()) presetId else current.nightPresetId,
         )
     }
 
@@ -472,7 +472,15 @@ fun LocalReaderScreen(
         }
     }
     val currentReaderText = currentReaderTextLong.toColor()
-    val topBarColor = if (barsVisible) MaterialTheme.colorScheme.surface else currentReaderBackground
+    val activePresetId = if (effectiveDark) nightPreset else dayPreset
+    val activePreset = (if (effectiveDark) ThemePresets.night else ThemePresets.day)
+        .firstOrNull { it.id == activePresetId }
+    val isImagePreset = activePreset?.imageResName != null
+    val topBarColor = when {
+        isImagePreset -> Color.Transparent
+        barsVisible -> MaterialTheme.colorScheme.surface
+        else -> currentReaderBackground
+    }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
     val candidateSafeTop = if (statusBarTop > cutoutTop) statusBarTop else cutoutTop
@@ -482,7 +490,8 @@ fun LocalReaderScreen(
         }
     }
     SideEffect {
-        activity?.window?.statusBarColor = topBarColor.toArgb()
+        activity?.window?.statusBarColor =
+            if (isImagePreset) Color.Transparent.toArgb() else topBarColor.toArgb()
     }
 
     Box(
@@ -679,16 +688,16 @@ fun LocalReaderScreen(
             }
         }
         if (barsVisible) {
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth(),
-                color = topBarColor
-            ) {
-                Column {
+            if (isImagePreset) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                ) {
                     Spacer(modifier = Modifier.height(statusBarTop))
                     TopAppBar(
                         windowInsets = WindowInsets(0.dp),
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                         title = { Text(uiState.title.ifBlank { "本地阅读器" }, maxLines = 1) },
                         navigationIcon = {
                             IconButton(onClick = leaveReader) {
@@ -712,6 +721,42 @@ fun LocalReaderScreen(
                             }
                         }
                     )
+                }
+            } else {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth(),
+                    color = topBarColor
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(statusBarTop))
+                        TopAppBar(
+                            windowInsets = WindowInsets(0.dp),
+                            title = { Text(uiState.title.ifBlank { "本地阅读器" }, maxLines = 1) },
+                            navigationIcon = {
+                                IconButton(onClick = leaveReader) {
+                                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                                }
+                            },
+                            actions = {
+                                IconButton(onClick = { showBookmarksDialog = true }) {
+                                    Icon(Icons.Default.BookmarkAdd, contentDescription = "书签")
+                                }
+                                IconButton(onClick = { showSearchDialog = true }) {
+                                    Icon(Icons.Default.Search, contentDescription = "搜索")
+                                }
+                                if (uiState.sourceKind != RecentReadingEntity.SOURCE_KIND_LOCAL) {
+                                    IconButton(
+                                        onClick = { viewModel.cacheCurrentBook(context.applicationContext) },
+                                        enabled = !uiState.isCached && !uiState.isCaching
+                                    ) {
+                                        Icon(Icons.Default.CloudDownload, contentDescription = "缓存本书")
+                                    }
+                                }
+                            }
+                        )
+                    }
                 }
             }
 }
@@ -767,6 +812,7 @@ fun LocalReaderScreen(
                 onNext = { viewModel.nextTtsSentence() },
                 onOpenPanel = { viewModel.startTts() },
                 onCloseTts = { viewModel.exitTts() },
+                transparent = isImagePreset,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout))
@@ -1309,7 +1355,7 @@ if (showProgressJumpDialog) {
                                     }
                                 }
                             }
-                            applyReaderPalette(palette)
+                            applyReaderPalette(palette, presetId = preset)
                             scope.launch {
                                 if (effectiveDark) {
                                     settingsRepository.saveNightThemePreset(preset)
@@ -1322,23 +1368,6 @@ if (showProgressJumpDialog) {
                             }
                         }
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("阅读背景纹理")
-                        OutlinedButton(onClick = { showTextureDialog = true }) {
-                            Text(
-                                when {
-                                    effectiveDark && nightTextureId.isNotEmpty() -> "已选·$nightTextureId"
-                                    !effectiveDark && dayTextureId.isNotEmpty() -> "已选·$dayTextureId"
-                                    effectiveDark -> "未选（夜间）"
-                                    else -> "未选（白天）"
-                                }
-                            )
-                        }
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1444,64 +1473,6 @@ if (showProgressJumpDialog) {
                     viewModel.persistPageMargins()
                     showPageMarginDialog = false
                 }) { Text("关闭") }
-            }
-        )
-    }
-
-    if (showTextureDialog) {
-        AlertDialog(
-            onDismissRequest = { showTextureDialog = false },
-            title = { Text("阅读背景纹理") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "纹理会覆盖整个阅读区。白天/夜间自动切换对应颜色版本。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(if (effectiveDark) "当前：夜间（自动暗色）" else "当前：白天（自动亮色）")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("白天纹理")
-                        Text(
-                            if (dayTextureId.isEmpty()) "纯色" else dayTextureId,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    ReaderTexturePicker(
-                        selected = dayTextureId,
-                        variant = "light",
-                        onSelect = { id ->
-                            scope.launch { settingsRepository.saveDayTexture(id) }
-                            viewModel.updateReaderSettings(dayTextureId = id)
-                        }
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("夜间纹理")
-                        Text(
-                            if (nightTextureId.isEmpty()) "纯色" else nightTextureId,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    ReaderTexturePicker(
-                        selected = nightTextureId,
-                        variant = "dark",
-                        onSelect = { id ->
-                            scope.launch { settingsRepository.saveNightTexture(id) }
-                            viewModel.updateReaderSettings(nightTextureId = id)
-                        }
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showTextureDialog = false }) { Text("完成") }
             }
         )
     }
@@ -2028,14 +1999,15 @@ private fun FloatingTtsBar(
     onNext: () -> Unit,
     onOpenPanel: () -> Unit,
     onCloseTts: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    transparent: Boolean = false
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        tonalElevation = 6.dp,
-        shadowElevation = 6.dp,
+        tonalElevation = if (transparent) 0.dp else 6.dp,
+        shadowElevation = if (transparent) 0.dp else 6.dp,
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+        color = if (transparent) Color.Transparent else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -2131,90 +2103,54 @@ private fun ReaderThemePresetPicker(
     selected: String,
     onSelect: (String) -> Unit
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+    val ctx = LocalContext.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+    ) {
         presets.forEach { preset ->
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val isSelected = preset.id == selected
+                val imgResId = preset.imageResName?.let {
+                    ctx.resources.getIdentifier(it, "drawable", ctx.packageName)
+                } ?: 0
                 Box(
                     modifier = Modifier
-                        .size(if (preset.id == selected) 40.dp else 34.dp)
+                        .size(if (isSelected) 40.dp else 34.dp)
                         .clip(CircleShape)
-                        .background(preset.background.toColor())
+                        .background(
+                            if (imgResId != 0) Color.Transparent
+                            else preset.background.toColor()
+                        )
                         .clickable { onSelect(preset.id) }
                         .padding(4.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(preset.text.toColor())
-                    )
+                    if (imgResId != 0) {
+                        Image(
+                            painter = painterResource(imgResId),
+                            contentDescription = preset.label,
+                            modifier = Modifier
+                                .size(if (isSelected) 32.dp else 28.dp)
+                                .clip(CircleShape),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(preset.text.toColor())
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = preset.label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (preset.id == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReaderTexturePicker(
-    selected: String,
-    variant: String = "light",
-    onSelect: (String) -> Unit
-) {
-    val textures = remember {
-        listOf(
-            "" to "纯色",
-            "paper" to "纸纹",
-            "leather" to "牛皮"
-        )
-    }
-    val ctx = LocalContext.current
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        textures.forEach { (id, label) ->
-            val resName = if (id.isEmpty()) null else "bg_${id}_$variant"
-            val resId = resName?.let { ctx.resources.getIdentifier(resName, "drawable", ctx.packageName) } ?: 0
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    modifier = Modifier
-                        .size(if (id == selected) 40.dp else 34.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (resId != 0) Color.Transparent
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .clickable { onSelect(id) }
-                        .border(
-                            width = if (id == selected) 2.dp else 1.dp,
-                            color = if (id == selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outline,
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (resId != 0) {
-                        Image(
-                            painter = painterResource(resId),
-                            contentDescription = label,
-                            modifier = Modifier
-                                .size(if (id == selected) 32.dp else 28.dp)
-                                .clip(CircleShape),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                        )
-                    } else {
-                        Text("—", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (id == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

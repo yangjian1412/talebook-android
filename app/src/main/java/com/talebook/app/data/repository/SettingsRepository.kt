@@ -102,8 +102,6 @@ class SettingsRepository(private val context: Context) {
         private val READER_BACKGROUND_COLOR_KEY = stringPreferencesKey("reader_background_color")
         private val READER_TEXT_COLOR_KEY = stringPreferencesKey("reader_text_color")
         private val READER_CUSTOM_THEME_ENABLED_KEY = booleanPreferencesKey("reader_custom_theme_enabled")
-        private val READER_DAY_TEXTURE_KEY = stringPreferencesKey("reader_day_texture")
-        private val READER_NIGHT_TEXTURE_KEY = stringPreferencesKey("reader_night_texture")
         private val READER_CUSTOM_FONT_PATH_KEY = stringPreferencesKey("reader_custom_font_path")
         private val READER_CUSTOM_FONT_NAME_KEY = stringPreferencesKey("reader_custom_font_name")
         private val READER_EPUB_PREFS_JSON_KEY = stringPreferencesKey("reader_epub_prefs_json")
@@ -243,14 +241,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val readerCustomThemeEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[READER_CUSTOM_THEME_ENABLED_KEY] ?: false
-    }
-
-    val readerDayTexture: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[READER_DAY_TEXTURE_KEY] ?: ""
-    }
-
-    val readerNightTexture: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[READER_NIGHT_TEXTURE_KEY] ?: ""
     }
 
     val readerCustomFontPath: Flow<String> = context.dataStore.data.map { prefs ->
@@ -668,18 +658,6 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
             prefs[READER_BACKGROUND_COLOR_KEY] = (background and 0xFFFFFF).toString()
             prefs[READER_TEXT_COLOR_KEY] = (text and 0xFFFFFF).toString()
             prefs[READER_CUSTOM_THEME_ENABLED_KEY] = enabled
-        }
-    }
-
-    suspend fun saveDayTexture(textureId: String) {
-        context.dataStore.edit { prefs ->
-            prefs[READER_DAY_TEXTURE_KEY] = textureId
-        }
-    }
-
-    suspend fun saveNightTexture(textureId: String) {
-        context.dataStore.edit { prefs ->
-            prefs[READER_NIGHT_TEXTURE_KEY] = textureId
         }
     }
 

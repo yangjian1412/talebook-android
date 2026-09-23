@@ -1060,8 +1060,8 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                 ChangelogSection(
                     version = "2.3.2",
                     items = listOf(
-                        "阅读背景增加纹理选择（白天/黑夜可独立设置）。",
-                        "字体设置支持上传自定义 ttf/otf/woff/woff2 字体。"
+                        "字体设置支持上传自定义 ttf/otf/woff/woff2 字体。",
+                        "阅读主题新增图片背景预设：白天三种（纸张/旧纸/羊皮）、夜间一种（夜图）。"
                     )
                 )
                 ChangelogSection(

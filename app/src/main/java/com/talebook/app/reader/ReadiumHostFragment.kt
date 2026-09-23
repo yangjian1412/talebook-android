@@ -56,8 +56,8 @@ private var lastChapterName: String = ""
     private var lastTwoPageActive: Boolean? = null
     private var lastAvoidLargePublisherFonts: Boolean? = null
     private var lastFontFamily: ReaderFontFamily? = null
-    private var lastTextureId: String = ""
-    private var lastTextureBase64: String? = null
+    private var lastBgImageRes: String = ""
+    private var bgImageStreamSeq = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -334,6 +334,7 @@ private var lastChapterName: String = ""
             val twoPageActive = session.displaySettings.twoPageMode && isLandscape
             injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
             injectCustomFontCss(navigator, session.displaySettings)
+            injectBackgroundImageCss(navigator, session.displaySettings)
         }
     }
 
@@ -686,7 +687,7 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             )
             injectLayoutCss(navigator, settings)
             injectBasicCss(navigator, settings, avoidLargePublisherFonts, twoPageActive)
-            injectTextureCss(navigator, settings)
+            injectBackgroundImageCss(navigator, settings)
             injectCustomFontCss(navigator, settings)
         }
     }
@@ -792,44 +793,99 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         }
     }
 
-    private fun injectTextureCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
-        val textureId = if (settings.appDark) settings.nightTextureId else settings.dayTextureId
-        val variant = if (settings.appDark) "dark" else "light"
-        if (textureId.isEmpty()) {
-            lastTextureId = ""
-            lastTextureBase64 = null
-            injectStyle(navigator, "talebook-reader-texture-css", "")
+    private fun injectBackgroundImageCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings) {
+        val palette = resolveActivePalette(settings)
+        val resName = palette?.imageResName
+        Log.d("TaleReadium", "injectBackgroundImageCss: day=${settings.dayPresetId} night=${settings.nightPresetId} appDark=${settings.appDark} res=$resName")
+        if (resName.isNullOrEmpty()) {
+            bgImageStreamSeq++
+            lastBgImageRes = ""
+            viewLifecycleOwner.lifecycleScope.launch {
+                runCatching {
+                    navigator.evaluateJavascript(
+                        "window.__tbBgKey=null;window.__tbBgParts=null;if(window.__tbBgUrl){URL.revokeObjectURL(window.__tbBgUrl);window.__tbBgUrl=null;}var old=document.getElementById('talebook-reader-bgimage-css');if(old)old.remove();var div=document.getElementById('tb-bg');if(div)div.remove();'ok'"
+                    )
+                }
+            }
             return
         }
-        val cacheKey = "${textureId}_$variant"
-        if (cacheKey == lastTextureId && lastTextureBase64 != null) {
-            applyTextureCss(navigator, lastTextureBase64!!)
-            return
-        }
+        val seq = ++bgImageStreamSeq
         viewLifecycleOwner.lifecycleScope.launch {
-            val resName = "bg_${textureId}_$variant"
+            val ready = runCatching {
+                navigator.evaluateJavascript(
+                    "!!(window.__tbBgKey === ${jsStr(resName)} && !!document.getElementById('talebook-reader-bgimage-css'))"
+                )
+            }.getOrNull()
+            if (seq != bgImageStreamSeq) return@launch
+            if (ready == "true") return@launch
             val resId = resources.getIdentifier(resName, "drawable", requireContext().packageName)
             if (resId == 0) {
-                Log.w("TaleReadium", "Texture resource not found: $resName")
+                Log.w("TaleReadium", "Background image resource not found: $resName")
                 return@launch
             }
-            val base64 = runCatching {
-                val bytes = resources.openRawResource(resId).use { it.readBytes() }
-                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-            }.getOrNull()
-            if (base64 == null) {
-                Log.w("TaleReadium", "Failed to load texture: $resName")
-                return@launch
+            Log.d("TaleReadium", "Streaming background image: $resName resId=$resId")
+            runCatching {
+                navigator.evaluateJavascript(
+                    "if(window.__tbBgUrl){URL.revokeObjectURL(window.__tbBgUrl);}window.__tbBgUrl=null;window.__tbBgKey=${jsStr(resName)};'ok'"
+                )
+                resources.openRawResource(resId).use { input ->
+                    val buf = ByteArray(300 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        if (seq != bgImageStreamSeq) return@use
+                        val b64 = if (n == buf.size) {
+                            android.util.Base64.encodeToString(buf, android.util.Base64.NO_WRAP)
+                        } else {
+                            android.util.Base64.encodeToString(buf, 0, n, android.util.Base64.NO_WRAP)
+                        }
+                        navigator.evaluateJavascript(
+                            "(function(){var s=${jsStr(b64)};var bin=atob(s);var a=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);window.__tbBgParts=window.__tbBgParts||[];window.__tbBgParts.push(a);})()"
+                        )
+                    }
+                }
+                if (seq != bgImageStreamSeq) return@launch
+                navigator.evaluateJavascript(
+                    """
+                    (function(){
+                        var parts=window.__tbBgParts||[];
+                        var blob=new Blob(parts,{type:'image/jpeg'});
+                        window.__tbBgParts=null;
+                        var url=URL.createObjectURL(blob);
+                        window.__tbBgUrl=url;
+                        var css="html{background-image:url("+url+") !important;background-size:100% 100% !important;background-repeat:no-repeat !important;background-attachment:fixed !important;background-position:center center !important;height:100vh !important;min-height:100vh !important;margin:0 !important;padding:0 !important;}body{background-color:transparent !important;background-image:none !important;min-height:100vh !important;}#tb-bg{position:fixed !important;top:0 !important;left:0 !important;width:100vw !important;height:100vh !important;background-image:url("+url+") !important;background-size:100% 100% !important;background-repeat:no-repeat !important;background-position:center center !important;z-index:-1 !important;pointer-events:none !important;display:block !important;}";
+                        var old=document.getElementById('talebook-reader-bgimage-css');
+                        if(old)old.remove();
+                        var st=document.createElement('style');
+                        st.id='talebook-reader-bgimage-css';
+                        st.textContent=css;
+                        (document.head||document.documentElement).appendChild(st);
+                        var oldDiv=document.getElementById('tb-bg');
+                        if(oldDiv)oldDiv.remove();
+                        var div=document.createElement('div');
+                        div.id='tb-bg';
+                        (document.body||document.documentElement).appendChild(div);
+                        return 'done';
+                    })();
+                    """.trimIndent()
+                )
+                lastBgImageRes = resName
+            }.onFailure { e ->
+                Log.w("TaleReadium", "Background image stream failed: ${e.message}")
             }
-            lastTextureId = cacheKey
-            lastTextureBase64 = base64
-            applyTextureCss(navigator, base64)
         }
     }
 
-    private fun applyTextureCss(navigator: EpubNavigatorFragment, base64: String) {
-        val css = "html, body { background-image: url(data:image/png;base64,$base64) !important; background-repeat: repeat !important; background-attachment: fixed !important; background-size: 128px 128px !important; }"
-        injectStyle(navigator, "talebook-reader-texture-css", css)
+    private fun resolveActivePalette(settings: ReaderDisplaySettings): com.talebook.app.ui.theme.ReaderThemePalette? {
+        val dayPreset = settings.dayPresetId
+        val nightPreset = settings.nightPresetId
+        return if (settings.appDark) {
+            com.talebook.app.ui.theme.ThemePresets.night.firstOrNull { it.id == nightPreset }
+                ?: com.talebook.app.ui.theme.ThemePresets.night.first()
+        } else {
+            com.talebook.app.ui.theme.ThemePresets.day.firstOrNull { it.id == dayPreset }
+                ?: com.talebook.app.ui.theme.ThemePresets.day.first()
+        }
     }
 
     private var fontStreamSeq = 0
