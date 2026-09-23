@@ -478,7 +478,6 @@ fun LocalReaderScreen(
     }
     val currentReaderText = currentReaderTextLong.toColor()
     val topBarColor = when {
-        isImagePreset -> Color.Transparent
         barsVisible -> MaterialTheme.colorScheme.surface
         else -> currentReaderBackground
     }
@@ -491,8 +490,7 @@ fun LocalReaderScreen(
         }
     }
     SideEffect {
-        activity?.window?.statusBarColor =
-            if (isImagePreset) Color.Transparent.toArgb() else topBarColor.toArgb()
+        activity?.window?.statusBarColor = topBarColor.toArgb()
     }
 
     Box(
@@ -686,7 +684,6 @@ fun LocalReaderScreen(
                         showProgressJumpDialog = true
                     },
                     chapterPath = if (hideChapterPathInReader) "" else uiState.currentChapterPath,
-                    transparent = isImagePreset,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
@@ -719,7 +716,7 @@ fun LocalReaderScreen(
                     Spacer(modifier = Modifier.height(statusBarTop))
                     TopAppBar(
                         windowInsets = WindowInsets(0.dp),
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = topBarColor),
                         title = { Text(uiState.title.ifBlank { "本地阅读器" }, maxLines = 1) },
                         navigationIcon = {
                             IconButton(onClick = leaveReader) {
@@ -2062,16 +2059,12 @@ private fun ReaderBottomBar(
     onTts: () -> Unit,
     onProgressClick: () -> Unit,
     chapterPath: String = "",
-    transparent: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                if (transparent) Color.Transparent
-                else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
-            )
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         ReaderProgressOverlay(
