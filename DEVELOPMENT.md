@@ -46,7 +46,7 @@ A1. 全局导航栏隐藏
 - `LocalReaderScreen` 不再主动恢复导航栏；`ReaderScreen` 删除后无需再处理全屏块。
 
 A2. 阅读状态栏可隐藏开关
-- 新增 `SettingsRepository.readerHideStatusBarInReader`（默认 `false`），DataStore key：`reader_hide_status_bar_in_reader`。
+- 新增 `SettingsRepository.readerHideStatusBarInReader`（默认 `true`），DataStore key：`reader_hide_status_bar_in_reader`。
 - 开启后 `LocalReaderScreen` 进入时 `WindowInsetsControllerCompat.hide(Type.statusBars())`；退出时由 `MainActivity` 统一策略恢复（全局导航栏仍隐藏）。
 - `LocalReaderScreen` 左下角进度复合按钮增加时间显示：`HH:mm`，使用 `LocalTime.now()` 通过 `LaunchedEffect` 每分钟刷新一次；与现有进度按钮同行布局。
 

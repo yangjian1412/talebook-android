@@ -196,11 +196,7 @@ private var lastChapterName: String = ""
                 navigator.currentLocator
                     .onEach { locator ->
                         saveProgress(session.bookId, locator)
-                        val toc = session.publication.tableOfContents
-                        val bookTitle = session.publication.metadata.title ?: ""
-                        val chapter = buildChapterPath(locator.href.toString(), toc, bookTitle)
-                        if (chapter.isNotBlank()) lastChapterName = chapter
-                        ReadiumUiEvents.emitCurrentChapterPath(sessionId, chapter.ifBlank { lastChapterName })
+                        emitChapterPath(session, locator)
                     }
                     .launchIn(this)
                 ReadiumUiEvents.addBookmarks
@@ -235,7 +231,7 @@ private var lastChapterName: String = ""
                             val link = findLink(session.publication.tableOfContents, href)
                                 ?: findLink(session.publication.readingOrder, href)
                             if (link != null) {
-                                restartWithLocator(buildLocatorJson(link))
+                                restartWithLocator(buildLocatorJson(link, readingOrder = session.publication.readingOrder))
                             }
                         }
                     }
@@ -333,7 +329,10 @@ private var lastChapterName: String = ""
         android.util.Log.d("TaleReadium", "External link: $url")
     }
 
-    override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {}
+    override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
+        val session = ReadiumSessionStore.get(sessionId) ?: return
+        emitChapterPath(session, locator)
+    }
 
     override fun onPageLoaded() {
         val session = ReadiumSessionStore.get(sessionId) ?: return
@@ -349,28 +348,104 @@ private var lastChapterName: String = ""
                 setNavigatorWebViewTransparent(navigator)
             }
         }
+        if (!healedInitialProgress) {
+            healedInitialProgress = true
+            viewLifecycleOwner.lifecycleScope.launch {
+                healBareProgressIfNeeded(session, navigator.currentLocator.value)
+            }
+        }
+    }
+
+    private var healedInitialProgress: Boolean = false
+
+    private suspend fun healBareProgressIfNeeded(session: ReadiumSession, locator: Locator) {
+        val dao = ReaderDatabase.get(requireContext()).readerDao()
+        val row = dao.getProgress(session.serverId, session.bookId) ?: return
+        if (row.progression > 0.0 && !LocatorProgress.looksBareLocatorJson(row.locatorJson)) return
+        val stored = runCatching { Locator.fromJSON(JSONObject(row.locatorJson)) }.getOrNull()
+            ?: return
+        val estimated = LocatorProgress.estimateTotalProgression(session.publication, stored)
+            ?: LocatorProgress.estimateTotalProgression(session.publication, locator)
+            ?: return
+        if (estimated <= 0.0) return
+        val healed = LocatorProgress.withTotalProgression(
+            if (stored.href.toString().isBlank()) locator else stored,
+            estimated
+        )
+        val now = System.currentTimeMillis()
+        dao.saveProgress(row.copy(locatorJson = healed.toJSON().toString(), progression = estimated, updatedAt = now))
+        dao.getRecentEntry(session.serverId, session.bookId)?.let { recent ->
+            if (recent.progression <= 0.0) {
+                dao.upsertRecentEntry(recent.copy(progression = estimated, updatedAt = now))
+            }
+        }
+        ReadiumUiEvents.emitProgress(sessionId, estimated)
     }
 
 private suspend fun saveProgress(bookId: Int, locator: Locator) {
         val session = ReadiumSessionStore.get(sessionId) ?: return
         val serverId = session.serverId
-        val progression = locator.locations.totalProgression ?: 0.0
         val now = System.currentTimeMillis()
         val dao = ReaderDatabase.get(requireContext()).readerDao()
+        val existing = dao.getProgress(serverId, bookId)
+        val existingProgression = existing?.progression ?: 0.0
+
+        var progression: Double?
+        var locatorOut = locator
+        val reported = locator.locations.totalProgression
+        if (reported != null) {
+            progression = reported
+        } else {
+            progression = LocatorProgress.estimateTotalProgression(session.publication, locator)
+            if (progression == null && existingProgression > 0.0) {
+                progression = existingProgression
+            }
+            if (progression != null) {
+                locatorOut = LocatorProgress.withTotalProgression(locator, progression)
+            }
+        }
+        if (progression == null) progression = 0.0
+        if (reported == null && progression <= 0.0 && existingProgression > 0.0) {
+            progression = existingProgression
+            locatorOut = LocatorProgress.withTotalProgression(locator, progression)
+        }
+        if (reported == null && locatorOut.locations.totalProgression == null && progression > 0.0) {
+            locatorOut = LocatorProgress.withTotalProgression(locator, progression)
+        }
+
         dao.saveProgress(
                 ReadingProgressEntity(
                     serverId = serverId,
                     bookId = bookId,
-                locatorJson = locator.toJSON().toString(),
+                locatorJson = locatorOut.toJSON().toString(),
                 progression = progression,
                 updatedAt = now
             )
         )
-        val existing = dao.getRecentEntry(serverId, bookId)
-        if (existing != null) {
-            dao.upsertRecentEntry(existing.copy(progression = progression, updatedAt = now))
+        val existingRecent = dao.getRecentEntry(serverId, bookId)
+        if (existingRecent != null) {
+            val recentProgression = if (reported == null && progression <= 0.0 && existingRecent.progression > 0.0) {
+                existingRecent.progression
+            } else {
+                progression
+            }
+            if (kotlin.math.abs(existingRecent.progression - recentProgression) > 0.000001 || existingRecent.progression <= 0.0 && recentProgression > 0.0) {
+                dao.upsertRecentEntry(existingRecent.copy(progression = recentProgression, updatedAt = now))
+            } else {
+                dao.upsertRecentEntry(existingRecent.copy(updatedAt = now))
+            }
+            progression = recentProgression
         }
         ReadiumUiEvents.emitProgress(sessionId, progression)
+    }
+
+    private fun emitChapterPath(session: ReadiumSession, locator: Locator) {
+        val toc = session.publication.tableOfContents
+        val bookTitle = session.publication.metadata.title ?: ""
+        val chapter = buildChapterPath(locator.href.toString(), toc, bookTitle, session.publication.readingOrder)
+            .ifBlank { locator.title?.takeIf { it.isNotBlank() } ?: "" }
+        if (chapter.isNotBlank()) lastChapterName = chapter
+        ReadiumUiEvents.emitCurrentChapterPath(sessionId, chapter.ifBlank { lastChapterName })
     }
 
     private suspend fun addBookmark(bookId: Int, locator: Locator) {
@@ -568,21 +643,25 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
         val clampedProgress = progress.coerceIn(0.0, 1.0)
         val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
-        restartWithLocator(buildLocatorJson(links[index], totalProgression = clampedProgress))
+        restartWithLocator(buildLocatorJson(links[index], totalProgression = clampedProgress, readingOrder = links))
     }
 
     private fun restartByPage(readingOrder: List<Link>, page: Int) {
         val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
-        restartWithLocator(buildLocatorJson(links[(page - 1).coerceIn(0, links.lastIndex)]))
+        val index = (page - 1).coerceIn(0, links.lastIndex)
+        val total = (index.toDouble() / links.size).coerceIn(0.0, 1.0)
+        restartWithLocator(buildLocatorJson(links[index], totalProgression = total, readingOrder = links))
     }
 
-    private fun buildLocatorJson(link: Link, totalProgression: Double? = null): String {
+    private fun buildLocatorJson(link: Link, totalProgression: Double? = null, readingOrder: List<Link> = emptyList()): String {
         val mediaType = link.mediaType?.toString() ?: "application/xhtml+xml"
         val hrefStr = link.href.toString().replace("\"", "\\\"")
-        return if (totalProgression != null)
-            """{"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":$totalProgression}}"""
+        val total = totalProgression
+            ?: LocatorProgress.estimateTotalForLink(readingOrder, link)
+        return if (total != null)
+            """{"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":${total.coerceIn(0.0, 1.0)}}}"""
         else
-            """{"href":"$hrefStr","type":"$mediaType"}"""
+            """{"href":"$hrefStr","type":"$mediaType","locations":{}}"""
     }
 
     private fun restartWithLocator(locatorJson: String) {
@@ -636,19 +715,28 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         return null
     }
 
-    private fun buildChapterPath(href: String, toc: List<Link>, bookTitle: String): String {
-        val cleanHref = href.substringBefore("#").trimEnd('/')
-        val target = findTocItem(toc, cleanHref)
+    private fun buildChapterPath(href: String, toc: List<Link>, bookTitle: String, readingOrder: List<Link> = emptyList()): String {
+        val target = findTocItem(toc, href, readingOrder)
         val chapterTitle = target?.title?.takeIf { it.isNotBlank() } ?: ""
         return truncate(chapterTitle, 20)
     }
 
-    private fun findTocItem(toc: List<Link>, href: String): Link? {
+    private fun findTocItem(toc: List<Link>, href: String, readingOrder: List<Link> = emptyList()): Link? {
         for (link in toc) {
-            val linkHref = link.href.toString().substringBefore("#").trimEnd('/')
-            if (linkHref == href || linkHref.endsWith(href) || href.endsWith(linkHref)) return link
-            val child = findTocItem(link.children, href)
+            if (LocatorProgress.hrefMatches(link.href.toString(), href)) return link
+            val child = findTocItem(link.children, href, emptyList())
             if (child != null) return child
+        }
+        if (readingOrder.isNotEmpty()) {
+            val roHref = readingOrder.firstOrNull { LocatorProgress.hrefMatches(it.href.toString(), href) }
+                ?.href?.toString()
+            if (roHref != null && roHref != href) {
+                for (link in toc) {
+                    if (LocatorProgress.hrefMatches(link.href.toString(), roHref)) return link
+                    val child = findTocItem(link.children, roHref, emptyList())
+                    if (child != null) return child
+                }
+            }
         }
         return null
     }

@@ -1,10 +1,16 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.3.1`
+> 当前版本：`2.3.2`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 2.3.2 更新日志
+
+- 新增自定义字体功能。
+- 新增四个预设图片背景。
+- 修复配置导入无法找到文件的bug。
 
 ### 2.3.1 更新日志
 

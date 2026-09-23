@@ -2,6 +2,8 @@
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -99,6 +101,21 @@ fun SettingsScreen(
     val readerCacheRepository = remember { ReaderCacheRepository() }
     val readerBackupRepository = remember { ReaderBackupRepository() }
     val captchaRepository = remember { CaptchaRepository() }
+    val pickBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                readerBackupRepository.importFromUri(context.applicationContext, uri).fold(
+                    onSuccess = { msg ->
+                        backupMessage = msg
+                        HomeViewModel.clearCache(context.applicationContext)
+                    },
+                    onFailure = { e -> backupMessage = e.message ?: "导入失败" }
+                )
+            }
+        }
+    }
 
     fun handleServerSave(server: LibraryServerConfig) {
         scope.launch {
@@ -188,23 +205,15 @@ fun SettingsScreen(
     if (showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false },
-            title = { Text("确认导入阅读数据？") },
-            text = { Text("将从 Download/talebook/ 导入最近一次备份。已有阅读进度可能被覆盖，书签和笔记会追加导入。") },
+            title = { Text("导入阅读数据备份") },
+            text = { Text("请选择之前导出的 JSON 备份文件（通常在 Download/talebook/）。已有阅读进度可能被覆盖，书签和笔记会追加导入。") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showImportDialog = false
-                        scope.launch {
-                            readerBackupRepository.importLatestFromDownloads(context.applicationContext).fold(
-                                onSuccess = { msg ->
-                                    backupMessage = msg
-                                    HomeViewModel.clearCache(context.applicationContext)
-                                },
-                                onFailure = { e -> backupMessage = e.message ?: "导入失败" }
-                            )
-                        }
+                        pickBackupLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*"))
                     }
-                ) { Text("导入") }
+                ) { Text("选择文件") }
             },
             dismissButton = {
                 TextButton(onClick = { showImportDialog = false }) { Text("取消") }
@@ -577,7 +586,7 @@ fun SettingsScreen(
             OutlinedButton(
                 onClick = { showImportDialog = true },
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("导入最近一次阅读数据备份") }
+            ) { Text("从文件导入阅读数据备份") }
             backupMessage?.let { msg ->
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -1060,8 +1069,9 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                 ChangelogSection(
                     version = "2.3.2",
                     items = listOf(
-                        "字体设置支持上传自定义 ttf/otf/woff/woff2 字体。",
-                        "阅读主题新增图片背景预设：白天三种（纸张/旧纸/羊皮）、夜间一种（夜图）。"
+                        "新增自定义字体功能。",
+                        "新增四个预设图片背景。",
+                        "修复配置导入无法找到文件的bug。"
                     )
                 )
                 ChangelogSection(

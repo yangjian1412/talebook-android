@@ -72,7 +72,7 @@ object ThemePresets {
         ReaderThemePalette(NIGHT_WARM, "暖夜", 0xFF201B17L, 0xFFA89A8EL, 0xFF2B241EL, 0xFFD0A56AL),
         ReaderThemePalette(NIGHT_BLUE, "深蓝", 0xFF111A24L, 0xFFA1ADBAL, 0xFF1B2633L, 0xFF8AB4F8L),
         ReaderThemePalette(NIGHT_GREEN, "墨绿", 0xFF111D18L, 0xFF9BAEA3L, 0xFF1A2921L, 0xFF8FC9A8L),
-        ReaderThemePalette(NIGHT_IMAGE, "图片", 0xFF0F1A28L, 0xFFE8F0FFL, 0xFF152236L, 0xFF7FB3FFL, "bg_image_night")
+        ReaderThemePalette(NIGHT_IMAGE, "夜空", 0xFF011B21L, 0xFFE6F7FAL, 0xFF06242CL, 0xFF5EC8D8L, "bg_image_night")
     )
 
     fun isDark(mode: String, systemDark: Boolean): Boolean = when (mode) {

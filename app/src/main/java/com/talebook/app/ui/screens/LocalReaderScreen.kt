@@ -161,7 +161,7 @@ fun LocalReaderScreen(
     val customText by settingsRepository.dayCustomText.collectAsState(initial = ThemePresets.day.first { it.id == ThemePresets.DAY_CUSTOM }.text)
     val customFontPath by settingsRepository.readerCustomFontPath.collectAsState(initial = "")
     val customFontName by settingsRepository.readerCustomFontName.collectAsState(initial = "")
-    val hideStatusBarInReader by settingsRepository.readerHideStatusBarInReader.collectAsState(initial = false)
+    val hideStatusBarInReader by settingsRepository.readerHideStatusBarInReader.collectAsState(initial = true)
     val hideTimeInReader by settingsRepository.readerHideTimeInReader.collectAsState(initial = false)
     val hideChapterPathInReader by settingsRepository.readerHideChapterPathInReader.collectAsState(initial = false)
     val hideToolbarLabels by settingsRepository.readerHideToolbarLabels.collectAsState(initial = true)

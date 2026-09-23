@@ -328,7 +328,7 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
     }
 
     val readerHideStatusBarInReader: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[READER_HIDE_STATUS_BAR_KEY] ?: false
+        prefs[READER_HIDE_STATUS_BAR_KEY] ?: true
     }
 
     val readerHideTimeInReader: Flow<Boolean> = context.dataStore.data.map { prefs ->

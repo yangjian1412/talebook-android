@@ -17,6 +17,7 @@ import com.talebook.app.data.repository.LocalLibraryRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.reader.EpubReadiumSession
+import com.talebook.app.reader.LocatorProgress
 import com.talebook.app.reader.PdfReadiumSession
 import com.talebook.app.reader.ReaderDisplaySettings
 import com.talebook.app.reader.ReaderFontFamily
@@ -687,8 +688,8 @@ private suspend fun openReadiumSession(
         return runCatching {
             val engine = ReadiumEngine(context)
             val dao = ReaderDatabase.get(context).readerDao()
-            val initialLocator = dao.getProgress(serverId, bookId)?.locatorJson?.let { json ->
-                runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
+            var initialLocator = dao.getProgress(serverId, bookId)?.locatorJson?.let { json ->
+                if (json.isBlank()) null else runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
             }
             val isRemote = !uri.startsWith("file:")
             val asset = if (!isRemote) {
@@ -700,6 +701,37 @@ private suspend fun openReadiumSession(
 
             val publication = engine.publicationOpener.open(asset, allowUserInteraction = true).getOrNull()
                 ?: error("Readium 无法解析书籍")
+            val progressRow = dao.getProgress(serverId, bookId)
+            if (progressRow != null) {
+                val needsHeal = initialLocator == null ||
+                    LocatorProgress.looksBareLocatorJson(progressRow.locatorJson) ||
+                    (progressRow.progression <= 0.0 && (initialLocator?.locations?.totalProgression ?: 0.0) <= 0.0)
+                if (needsHeal && initialLocator != null) {
+                    val estimated = LocatorProgress.estimateTotalProgression(publication, initialLocator)
+                    val fallback = if (progressRow.progression > 0.0) progressRow.progression else estimated
+                    if (fallback != null && fallback > 0.0) {
+                        val healed = LocatorProgress.withTotalProgression(initialLocator, fallback)
+                        initialLocator = healed
+                        dao.saveProgress(
+                            progressRow.copy(
+                                locatorJson = healed.toJSON().toString(),
+                                progression = fallback,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
+                        dao.getRecentEntry(serverId, bookId)?.let { recent ->
+                            if (recent.progression <= 0.0) {
+                                dao.upsertRecentEntry(
+                                    recent.copy(
+                                        progression = fallback,
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             val hasLargeEmbeddedFonts = isRemote && hasLargeEmbeddedFonts(publication)
             val sessionId = ReadiumSessionStore.nextId()
             val session = when {
