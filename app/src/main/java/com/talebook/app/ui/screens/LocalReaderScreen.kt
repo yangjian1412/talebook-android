@@ -2105,7 +2105,7 @@ private fun ReaderThemePresetPicker(
 ) {
     val ctx = LocalContext.current
     Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
@@ -2118,14 +2118,14 @@ private fun ReaderThemePresetPicker(
                 } ?: 0
                 Box(
                     modifier = Modifier
-                        .size(if (isSelected) 40.dp else 34.dp)
+                        .size(if (isSelected) 38.dp else 32.dp)
                         .clip(CircleShape)
                         .background(
                             if (imgResId != 0) Color.Transparent
                             else preset.background.toColor()
                         )
                         .clickable { onSelect(preset.id) }
-                        .padding(4.dp),
+                        .padding(3.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     if (imgResId != 0) {
@@ -2133,14 +2133,14 @@ private fun ReaderThemePresetPicker(
                             painter = painterResource(imgResId),
                             contentDescription = preset.label,
                             modifier = Modifier
-                                .size(if (isSelected) 32.dp else 28.dp)
+                                .size(if (isSelected) 30.dp else 26.dp)
                                 .clip(CircleShape),
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop
                         )
                     } else {
                         Box(
                             modifier = Modifier
-                                .size(12.dp)
+                                .size(11.dp)
                                 .clip(CircleShape)
                                 .background(preset.text.toColor())
                         )

@@ -60,10 +60,10 @@ object ThemePresets {
         ReaderThemePalette(DAY_PINK, "浅粉", 0xFFFFF0F3L, 0xFF4A2C35L, 0xFFFFF8F9L, 0xFFC65A78L),
         ReaderThemePalette(DAY_BLUE, "浅蓝", 0xFFF0F5FFL, 0xFF25364AL, 0xFFF8FBFFL, 0xFF4F75B8L),
         ReaderThemePalette(DAY_GREEN, "浅绿", 0xFFF0FAF0L, 0xFF263D2AL, 0xFFF8FFF8L, 0xFF4F8A59L),
-        ReaderThemePalette(DAY_CUSTOM, "自定义", 0xFFF8F5EEL, 0xFF2B2B2BL, 0xFFFFFCF5L, 0xFF8A6B3EL),
         ReaderThemePalette(DAY_PAPER, "纸张", 0xFFF6F1E3L, 0xFF2B2B2BL, 0xFFFAF6EAL, 0xFF8A6B3EL, "bg_image_paper"),
         ReaderThemePalette(DAY_OLD_PAPER, "旧纸", 0xFFE8D9B0L, 0xFF3A2C18L, 0xFFEFE0C2L, 0xFF8A6B3EL, "bg_image_old_paper"),
-        ReaderThemePalette(DAY_PARCHMENT, "羊皮", 0xFFEDE0C0L, 0xFF3A2A14L, 0xFFF3E7C9L, 0xFF8A6B3EL, "bg_image_parchment")
+        ReaderThemePalette(DAY_PARCHMENT, "羊皮", 0xFFEDE0C0L, 0xFF3A2A14L, 0xFFF3E7C9L, 0xFF8A6B3EL, "bg_image_parchment"),
+        ReaderThemePalette(DAY_CUSTOM, "自定义", 0xFFF8F5EEL, 0xFF2B2B2BL, 0xFFFFFCF5L, 0xFF8A6B3EL)
     )
 
     val night = listOf(
