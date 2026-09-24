@@ -1,20 +1,19 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    id("kotlin-kapt")
+    alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.talebook.app"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.talebook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "2.3.2"
+        versionCode = 17
+        versionName = "3.4.0alpha"
     }
 
     signingConfigs {
@@ -43,16 +42,18 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
     }
 
     lint {
         checkReleaseBuilds = false
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 
@@ -84,7 +85,7 @@ dependencies {
     implementation(libs.androidx.fragment.compose)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
-    kapt(libs.androidx.room.compiler)
+    ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.documentfile)
 
     // Readium Kotlin Toolkit — 本地阅读器内核
@@ -93,6 +94,6 @@ dependencies {
     implementation(libs.readium.navigator)
     implementation(libs.readium.adapter.pdfium.navigator)
 
-    // Core library desugaring（Readium 要求）
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    // Core library desugaring（Readium 3.4 要求 2.1.5+）
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

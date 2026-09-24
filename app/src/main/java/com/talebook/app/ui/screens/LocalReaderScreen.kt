@@ -122,6 +122,7 @@ import com.talebook.app.reader.ReadiumHostFragment
 import com.talebook.app.data.local.RecentReadingEntity
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.ReaderFontFamily
+import com.talebook.app.reader.ReaderPageAnimation
 import com.talebook.app.reader.ReaderTheme
 import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.repository.SettingsRepository
@@ -679,7 +680,7 @@ fun LocalReaderScreen(
                     onNote = { showNotesDialog = true },
                     onTts = { viewModel.startTts() },
                     onProgressClick = {
-                        progressJumpText = ((progression * 100).toInt()).toString()
+                        progressJumpText = String.format(java.util.Locale.US, "%.2f", progression * 100)
                         pageJumpText = ""
                         showProgressJumpDialog = true
                     },
@@ -695,7 +696,7 @@ fun LocalReaderScreen(
                     showTime = !hideTimeInReader,
                     contentColor = currentReaderText,
                     onClick = {
-                        progressJumpText = ((progression * 100).toInt()).toString()
+                        progressJumpText = String.format(java.util.Locale.US, "%.2f", progression * 100)
                         pageJumpText = ""
                         showProgressJumpDialog = true
                     },
@@ -1059,7 +1060,7 @@ fun LocalReaderScreen(
                                     Column(modifier = Modifier.fillMaxWidth()) {
                                         Text(result.text)
                                         Text(
-                                            text = "${(result.progression * 100).toInt()}%",
+                                            text = "${String.format(java.util.Locale.US, "%.2f", result.progression * 100)}%",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -1084,7 +1085,15 @@ if (showProgressJumpDialog) {
                 Column {
                     OutlinedTextField(
                         value = progressJumpText,
-                        onValueChange = { progressJumpText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        onValueChange = { raw ->
+                            val cleaned = raw.filter { ch -> ch.isDigit() || ch == '.' }
+                            val parts = cleaned.split('.')
+                            val normalized = when {
+                                parts.size <= 1 -> cleaned.take(6)
+                                else -> "${parts[0].take(3)}.${parts[1].take(2)}"
+                            }
+                            progressJumpText = normalized
+                        },
                         label = { Text("百分比 0-100") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -1107,7 +1116,7 @@ if (showProgressJumpDialog) {
                         if (page != null) {
                             viewModel.goToPage(page)
                         } else {
-                            val percent = progressJumpText.toIntOrNull()?.coerceIn(0, 100) ?: 0
+                            val percent = progressJumpText.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
                             viewModel.goToProgress(percent / 100.0)
                         }
                         showProgressJumpDialog = false
@@ -1701,6 +1710,40 @@ if (showProgressJumpDialog) {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = com.talebook.app.reader.ReaderScrollTapSpeed.SLOW)
                         }
                     }
+                    Text("翻页动画")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        ReaderOptionChip("平滑", readerSettings.pageAnimation == ReaderPageAnimation.SMOOTH) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.SMOOTH)
+                        }
+                        ReaderOptionChip("滑动", readerSettings.pageAnimation == ReaderPageAnimation.SLIDE) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.SLIDE)
+                        }
+                        ReaderOptionChip("覆盖", readerSettings.pageAnimation == ReaderPageAnimation.COVER) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.COVER)
+                        }
+                        ReaderOptionChip("推入", readerSettings.pageAnimation == ReaderPageAnimation.OVERRIDE) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.OVERRIDE)
+                        }
+                        ReaderOptionChip("无", readerSettings.pageAnimation == ReaderPageAnimation.NONE) {
+                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.NONE)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("无动画时点击仍过渡")
+                        CompactSwitch(
+                            checked = readerSettings.forceTapAnimation,
+                            onCheckedChange = {
+                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, forceTapAnimation = it)
+                            }
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1893,7 +1936,7 @@ if (showProgressJumpDialog) {
                                         Column(modifier = Modifier.fillMaxWidth()) {
                                             Text(bookmark.title.ifBlank { "书签" })
                                             Text(
-                                                text = "${(bookmark.progression * 100).toInt()}%",
+                                                text = "${String.format(java.util.Locale.US, "%.2f", bookmark.progression * 100)}%",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -2268,7 +2311,7 @@ private fun ReaderProgressOverlay(
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
-                    text = "${(safeProgress * 100).toInt()}%",
+                    text = "${String.format(java.util.Locale.US, "%.2f", safeProgress * 100)}%",
                     style = MaterialTheme.typography.labelSmall,
                     color = contentColor.copy(alpha = 0.7f)
                 )

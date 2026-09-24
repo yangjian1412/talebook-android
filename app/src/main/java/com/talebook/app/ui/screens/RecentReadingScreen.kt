@@ -338,4 +338,4 @@ private fun RecentReadingBookRow(
     }
 }
 
-private fun Double.toPercentText(): String = "${(this.coerceIn(0.0, 1.0) * 100).toInt()}%"
+private fun Double.toPercentText(): String = "${String.format(java.util.Locale.US, "%.2f", (this.coerceIn(0.0, 1.0) * 100))}%"

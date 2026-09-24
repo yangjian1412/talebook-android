@@ -327,7 +327,7 @@ fun BookDetailScreen(
                         if (uiState.readState != null && uiState.readState!!.percentage > 0) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "已读 ${(uiState.readState!!.percentage * 100).toInt()}%",
+                                text = "已读 ${String.format(java.util.Locale.US, "%.2f", uiState.readState!!.percentage * 100)}%",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -361,7 +361,7 @@ private fun LocalReaderInfoCard(
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("本地阅读", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text("阅读进度 ${(progression * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+            Text("阅读进度 ${String.format(java.util.Locale.US, "%.2f", progression * 100)}%", style = MaterialTheme.typography.bodySmall)
             LinearProgressIndicator(progress = { progression.toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
             if (isCached) {
                 Row(

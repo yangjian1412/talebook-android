@@ -1,10 +1,19 @@
 ﻿# Talebook Android
 
-> 当前版本：`2.3.2`
+> 当前版本：`3.4.0alpha`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 3.4.0alpha 更新日志
+
+- 内核升级至 Readium 3.4.0（AGP 9 / Gradle 9.3 / Kotlin 2.4，compileSdk 37）。
+- PDF 阅读：滚动/翻页开关接入 PdfiumPreferences；修复 PDF 总页数显示为 1 的问题（改用 positions）。
+- PDF 页码与百分比跳转按实际页定位。
+- 阅读进度百分比、跳转输入、书签/搜索进度统一保留两位小数。
+- 阅读器高级设置新增「翻页动画」（平滑/滑动/覆盖/推入/无）与无动画点击过渡开关。
+- Room 注解处理迁移至 KSP。
 
 ### 2.3.2 更新日志
 

@@ -692,7 +692,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v2.3.2",
+                text = "Tale Book v3.4.0alpha",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -1066,6 +1066,15 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                ChangelogSection(
+                    version = "3.4.0alpha",
+                    items = listOf(
+                        "内核升级至 Readium 3.4.0。",
+                        "PDF 滚动开关生效，修复 PDF 共1页问题。",
+                        "进度百分比与跳转保留两位小数。",
+                        "新增翻页动画设置。"
+                    )
+                )
                 ChangelogSection(
                     version = "2.3.2",
                     items = listOf(

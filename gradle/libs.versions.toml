@@ -1,7 +1,8 @@
 [versions]
-agp = "8.7.3"
-kotlin = "2.1.21"
-readium = "3.1.2"
+agp = "9.1.1"
+kotlin = "2.4.20"
+ksp = "2.3.12"
+readium = "3.4.0"
 fragment = "1.8.5"
 room = "2.7.1"
 core-ktx = "1.15.0"
@@ -53,5 +54,5 @@ readium-adapter-pdfium-navigator = { group = "org.readium.kotlin-toolkit", name 
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

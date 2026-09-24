@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.readium.adapter.pdfium.navigator.PdfiumDefaults
 import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.pdf.PdfNavigatorFactory
@@ -48,8 +49,10 @@ import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.allAreHtml
+import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.publication.services.content.Content
 import org.readium.r2.shared.publication.services.content.content
+import org.readium.r2.shared.util.ErrorException
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.archive.archive
 import org.readium.r2.shared.util.http.HttpError
@@ -290,7 +293,14 @@ class LocalReaderViewModel : ViewModel() {
                                 ?.flattenToc()
                                 .orEmpty()
                             val pageCount = session.getOrNull()
-                                ?.let { ReadiumSessionStore.get(it)?.publication?.readingOrder?.size }
+                                ?.let { sid ->
+                                    val pub = ReadiumSessionStore.get(sid)?.publication ?: return@let 0
+                                    if (pub.conformsTo(Publication.Profile.PDF)) {
+                                        runCatching { pub.positions().size }.getOrDefault(pub.readingOrder.size)
+                                    } else {
+                                        pub.readingOrder.size
+                                    }
+                                }
                                 ?: 0
                             _uiState.value = LocalReaderUiState(
                                 isLoading = false,
@@ -480,7 +490,14 @@ class LocalReaderViewModel : ViewModel() {
                 onSuccess = { sessionResult ->
                     val session = sessionResult.getOrNull()
                     val toc = session?.let { ReadiumSessionStore.get(it)?.publication?.tableOfContents }?.flattenToc().orEmpty()
-                    val pages = session?.let { ReadiumSessionStore.get(it)?.publication?.readingOrder?.size } ?: 0
+                    val pages = session?.let { sid ->
+                        val pub = ReadiumSessionStore.get(sid)?.publication ?: return@let 0
+                        if (pub.conformsTo(Publication.Profile.PDF)) {
+                            runCatching { pub.positions().size }.getOrDefault(pub.readingOrder.size)
+                        } else {
+                            pub.readingOrder.size
+                        }
+                    } ?: 0
                     val bookmarks = dao.getBookmarks(LOCAL_RECENT_SERVER_ID, recentBookId)
                     val annotations = dao.getAnnotations(LOCAL_RECENT_SERVER_ID, recentBookId)
                     _uiState.value = LocalReaderUiState(
@@ -662,21 +679,33 @@ pageMargins = settingsRepository.readerPageMargins.first(),
     }
 
     private fun friendlyOpenError(e: Throwable): String {
-    val raw = e.message.orEmpty().trim()
-    val isNetwork = e is HttpError.IO ||
-        e is HttpError.Unreachable ||
-        e is HttpError.Timeout ||
-        e is HttpError.SslHandshake ||
-        e is HttpError.Redirection ||
-        e is IOException
-    val isAuth = raw.contains("401") || raw.contains("403") || raw.contains("Unauthorized", ignoreCase = true)
-    return when {
-        isAuth && !isNetwork -> "需要登录当前书库或访问受限"
-        isNetwork -> "无法连接服务器，请检查网络"
-        raw.isBlank() -> "Readium 无法读取书籍资源"
-        else -> raw
+        val raw = e.message.orEmpty().trim()
+        val isNetwork = generateSequence(e) { it.cause }.any { t ->
+            t is IOException || (t is ErrorException && isNetworkHttpError(t.error))
+        }
+        val isAuth = raw.contains("401") || raw.contains("403") || raw.contains("Unauthorized", ignoreCase = true)
+        return when {
+            isAuth && !isNetwork -> "需要登录当前书库或访问受限"
+            isNetwork -> "无法连接服务器，请检查网络"
+            raw.isBlank() -> "Readium 无法读取书籍资源"
+            else -> raw
+        }
     }
-}
+
+    private fun isNetworkHttpError(error: org.readium.r2.shared.util.Error): Boolean {
+        var cur: org.readium.r2.shared.util.Error? = error
+        while (cur != null) {
+            when (cur) {
+                is HttpError.IO,
+                is HttpError.Unreachable,
+                is HttpError.Timeout,
+                is HttpError.SslHandshake,
+                is HttpError.Redirection -> return true
+            }
+            cur = cur.cause
+        }
+        return false
+    }
 
 private suspend fun openReadiumSession(
         context: Context,
@@ -692,15 +721,22 @@ private suspend fun openReadiumSession(
                 if (json.isBlank()) null else runCatching { Locator.fromJSON(JSONObject(json)) }.getOrNull()
             }
             val isRemote = !uri.startsWith("file:")
-            val asset = if (!isRemote) {
-                engine.assetRetriever.retrieve(File(URI(uri))).getOrNull()
+            val assetResult = if (!isRemote) {
+                engine.assetRetriever.retrieve(File(URI(uri)))
             } else {
                 val absoluteUrl = AbsoluteUrl(uri) ?: error("无效的阅读地址")
-                engine.assetRetriever.retrieve(absoluteUrl).getOrNull()
-            } ?: error("Readium 无法读取书籍资源")
+                engine.assetRetriever.retrieve(absoluteUrl)
+            }
+            val asset = assetResult.fold(
+                onSuccess = { it },
+                onFailure = { err -> throw ErrorException(err) }
+            ) ?: error("Readium 无法读取书籍资源")
 
-            val publication = engine.publicationOpener.open(asset, allowUserInteraction = true).getOrNull()
-                ?: error("Readium 无法解析书籍")
+            val openResult = engine.publicationOpener.open(asset, allowUserInteraction = true)
+            val publication = openResult.fold(
+                onSuccess = { it },
+                onFailure = { err -> throw ErrorException(err) }
+            ) ?: error("Readium 无法解析书籍")
             val progressRow = dao.getProgress(serverId, bookId)
             if (progressRow != null) {
                 val needsHeal = initialLocator == null ||
@@ -749,7 +785,9 @@ private suspend fun openReadiumSession(
                     )
                 }
                 publication.conformsTo(Publication.Profile.PDF) -> {
-                    val pdfEngine = PdfiumEngineProvider()
+                    val pdfEngine = PdfiumEngineProvider(
+                        PdfiumDefaults(scroll = readerSettings.scrollMode)
+                    )
                     PdfReadiumSession(
                         id = sessionId,
                         bookId = bookId,

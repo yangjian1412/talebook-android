@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
+import org.readium.adapter.pdfium.navigator.PdfiumPreferences
 import org.readium.r2.navigator.HyperlinkNavigator
 import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.Decoration
@@ -44,6 +45,7 @@ import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.Url
 import org.readium.r2.shared.util.data.ReadError
@@ -238,12 +240,18 @@ private var lastChapterName: String = ""
                     .launchIn(this)
                 ReadiumUiEvents.goToProgress
                     .onEach { (targetSessionId, progress) ->
-                        if (targetSessionId == sessionId) restartByProgress(session.publication.readingOrder, progress)
+                        if (targetSessionId == sessionId) {
+                            if (session is PdfReadiumSession) restartPdfByProgress(session, progress)
+                            else restartByProgress(session.publication.readingOrder, progress)
+                        }
                     }
                     .launchIn(this)
                 ReadiumUiEvents.goToPage
                     .onEach { (targetSessionId, page) ->
-                        if (targetSessionId == sessionId) restartByPage(session.publication.readingOrder, page)
+                        if (targetSessionId == sessionId) {
+                            if (session is PdfReadiumSession) restartPdfByPage(session, page)
+                            else restartByPage(session.publication.readingOrder, page)
+                        }
                     }
                     .launchIn(this)
                 ReadiumUiEvents.readerJump
@@ -653,6 +661,28 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         restartWithLocator(buildLocatorJson(links[index], totalProgression = total, readingOrder = links))
     }
 
+    private fun restartPdfByPage(session: PdfReadiumSession, page: Int) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val positions = runCatching { session.publication.positions() }.getOrNull().orEmpty()
+            if (positions.isEmpty()) return@launch
+            val index = (page - 1).coerceIn(0, positions.lastIndex)
+            restartWithLocator(positions[index].toJSON().toString())
+        }
+    }
+
+    private fun restartPdfByProgress(session: PdfReadiumSession, progress: Double) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val positions = runCatching { session.publication.positions() }.getOrNull().orEmpty()
+            if (positions.isEmpty()) return@launch
+            val clamped = progress.coerceIn(0.0, 1.0)
+            val index = (clamped * positions.size).toInt().coerceIn(0, positions.lastIndex)
+            val locator = positions[index].copy(
+                locations = positions[index].locations.copy(totalProgression = clamped)
+            )
+            restartWithLocator(locator.toJSON().toString())
+        }
+    }
+
     private fun buildLocatorJson(link: Link, totalProgression: Double? = null, readingOrder: List<Link> = emptyList()): String {
         val mediaType = link.mediaType?.toString() ?: "application/xhtml+xml"
         val hrefStr = link.href.toString().replace("\"", "\\\"")
@@ -793,6 +823,10 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             injectBasicCss(navigator, settings, avoidLargePublisherFonts, twoPageActive)
             injectBackgroundImageCss(navigator, settings)
             injectCustomFontCss(navigator, settings)
+        } else if (session is PdfReadiumSession && navigator is PdfNavigatorFragment<*, *>) {
+            @Suppress("UNCHECKED_CAST")
+            (navigator as PdfNavigatorFragment<org.readium.adapter.pdfium.navigator.PdfiumSettings, PdfiumPreferences>)
+                .submitPreferences(PdfiumPreferences(scroll = settings.scrollMode))
         }
     }
 
