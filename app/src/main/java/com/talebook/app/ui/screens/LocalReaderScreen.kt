@@ -122,7 +122,6 @@ import com.talebook.app.reader.ReadiumHostFragment
 import com.talebook.app.data.local.RecentReadingEntity
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.ReaderFontFamily
-import com.talebook.app.reader.ReaderPageAnimation
 import com.talebook.app.reader.ReaderTheme
 import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.repository.SettingsRepository
@@ -491,7 +490,23 @@ fun LocalReaderScreen(
         }
     }
     SideEffect {
-        activity?.window?.statusBarColor = topBarColor.toArgb()
+        val window = activity?.window ?: return@SideEffect
+        @Suppress("DEPRECATION")
+        window.statusBarColor = topBarColor.toArgb()
+        val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+        val luminance = (0.299f * topBarColor.red + 0.587f * topBarColor.green + 0.114f * topBarColor.blue)
+        controller.isAppearanceLightStatusBars = luminance > 0.5f
+    }
+    // Re-apply status bar appearance when settings dialogs open (dialog window can steal focus)
+    LaunchedEffect(showSettingsDialog, showAdvancedSettingsDialog) {
+        if (showSettingsDialog || showAdvancedSettingsDialog) {
+            val window = activity?.window ?: return@LaunchedEffect
+            @Suppress("DEPRECATION")
+            window.statusBarColor = topBarColor.toArgb()
+            val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+            val luminance = (0.299f * topBarColor.red + 0.587f * topBarColor.green + 0.114f * topBarColor.blue)
+            controller.isAppearanceLightStatusBars = luminance > 0.5f
+        }
     }
 
     Box(
@@ -713,8 +728,13 @@ fun LocalReaderScreen(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
+                        .background(topBarColor)
                 ) {
-                    Spacer(modifier = Modifier.height(statusBarTop))
+                    Spacer(
+                        modifier = Modifier.height(
+                            if (hideStatusBarInReader) 0.dp else statusBarTop
+                        )
+                    )
                     TopAppBar(
                         windowInsets = WindowInsets(0.dp),
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = topBarColor),
@@ -750,7 +770,11 @@ fun LocalReaderScreen(
                     color = topBarColor
                 ) {
                     Column {
-                        Spacer(modifier = Modifier.height(statusBarTop))
+                        Spacer(
+                            modifier = Modifier.height(
+                                if (hideStatusBarInReader) 0.dp else statusBarTop
+                            )
+                        )
                         TopAppBar(
                             windowInsets = WindowInsets(0.dp),
                             title = { Text(uiState.title.ifBlank { "本地阅读器" }, maxLines = 1) },
@@ -1102,7 +1126,20 @@ if (showProgressJumpDialog) {
                     OutlinedTextField(
                         value = pageJumpText,
                         onValueChange = { pageJumpText = it.filter { ch -> ch.isDigit() }.take(5) },
-                        label = { Text(if (uiState.format.equals("pdf", ignoreCase = true)) "页码，共 ${uiState.pageCount.coerceAtLeast(1)} 页" else "阅读顺序编号，共 ${uiState.pageCount.coerceAtLeast(1)} 段") },
+                        label = {
+                            Text(
+                                when {
+                                    uiState.format.equals("pdf", ignoreCase = true) && uiState.pageCount > 0 ->
+                                        "页码，共 ${uiState.pageCount} 页"
+                                    uiState.format.equals("pdf", ignoreCase = true) ->
+                                        "页码"
+                                    uiState.pageCount > 0 ->
+                                        "阅读顺序编号，共 ${uiState.pageCount} 段"
+                                    else ->
+                                        "阅读顺序编号"
+                                }
+                            )
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1710,40 +1747,6 @@ if (showProgressJumpDialog) {
                             viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, scrollTapPageTurn = com.talebook.app.reader.ReaderScrollTapSpeed.SLOW)
                         }
                     }
-                    Text("翻页动画")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        ReaderOptionChip("平滑", readerSettings.pageAnimation == ReaderPageAnimation.SMOOTH) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.SMOOTH)
-                        }
-                        ReaderOptionChip("滑动", readerSettings.pageAnimation == ReaderPageAnimation.SLIDE) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.SLIDE)
-                        }
-                        ReaderOptionChip("覆盖", readerSettings.pageAnimation == ReaderPageAnimation.COVER) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.COVER)
-                        }
-                        ReaderOptionChip("推入", readerSettings.pageAnimation == ReaderPageAnimation.OVERRIDE) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.OVERRIDE)
-                        }
-                        ReaderOptionChip("无", readerSettings.pageAnimation == ReaderPageAnimation.NONE) {
-                            viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, pageAnimation = ReaderPageAnimation.NONE)
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("无动画时点击仍过渡")
-                        CompactSwitch(
-                            checked = readerSettings.forceTapAnimation,
-                            onCheckedChange = {
-                                viewModel.updateReaderSettings(readerSettings.fontScale, readerSettings.lineHeight, readerSettings.brightness, readerSettings.scrollMode, readerSettings.useSystemBrightness, readerSettings.theme, readerSettings.tapPageTurn, forceTapAnimation = it)
-                            }
-                        )
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2343,6 +2346,12 @@ private fun FragmentActivity.showSystemBarsAfterReader() {
 private fun FragmentActivity.hideReaderStatusBar() {
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
         window.insetsController?.hide(AndroidWindowInsets.Type.statusBars())
+    } else {
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
     }
 }
 

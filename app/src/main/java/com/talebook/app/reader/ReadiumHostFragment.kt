@@ -40,6 +40,7 @@ import org.readium.r2.navigator.input.DragEvent
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.KeyEvent
 import org.readium.r2.navigator.input.TapEvent
+import org.readium.r2.navigator.pdf.PdfNavigatorFactory
 import org.readium.r2.navigator.pdf.PdfNavigatorFragment
 import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.shared.ExperimentalReadiumApi
@@ -78,10 +79,26 @@ private var lastChapterName: String = ""
                 paginationListener = this,
                 configuration = buildNaviConfiguration(session.displaySettings)
             )
-            is PdfReadiumSession -> session.navigatorFactory.createFragmentFactory(
-                initialLocator = jumpLocator ?: session.initialLocator,
-                listener = this
-            )
+            is PdfReadiumSession -> {
+                @Suppress("UNCHECKED_CAST")
+                val factory = session.navigatorFactory as PdfNavigatorFactory<
+                    org.readium.adapter.pdfium.navigator.PdfiumSettings,
+                    PdfiumPreferences,
+                    org.readium.adapter.pdfium.navigator.PdfiumPreferencesEditor
+                >
+                factory.createFragmentFactory(
+                    jumpLocator ?: session.initialLocator,
+                    PdfiumPreferences(
+                        scroll = session.displaySettings.scrollMode,
+                        scrollAxis = if (session.displaySettings.scrollMode) {
+                            org.readium.r2.navigator.preferences.Axis.VERTICAL
+                        } else {
+                            org.readium.r2.navigator.preferences.Axis.HORIZONTAL
+                        }
+                    ),
+                    this
+                )
+            }
         }
         super.onCreate(savedInstanceState)
     }
@@ -519,31 +536,15 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         ?.trim()
         .orEmpty()
 
-    private fun shouldAnimate(): Boolean {
-        val settings = ReadiumSessionStore.get(sessionId)?.displaySettings ?: return true
-        return when (settings.pageAnimation) {
-            ReaderPageAnimation.NONE -> settings.forceTapAnimation
-            ReaderPageAnimation.OVERRIDE -> true
-            else -> true
-        }
-    }
-
-    private fun scrollShouldAnimate(settings: ReaderDisplaySettings): Boolean {
-        return when (settings.pageAnimation) {
-            ReaderPageAnimation.NONE -> settings.forceTapAnimation
-            else -> true
-        }
-    }
-
     private fun goBackward(navigator: Navigator): Boolean = when (navigator) {
-        is EpubNavigatorFragment -> navigator.goBackward(shouldAnimate())
-        is PdfNavigatorFragment<*, *> -> navigator.goBackward(shouldAnimate())
+        is EpubNavigatorFragment -> navigator.goBackward(true)
+        is PdfNavigatorFragment<*, *> -> navigator.goBackward(true)
         else -> false
     }
 
     private fun goForward(navigator: Navigator): Boolean = when (navigator) {
-        is EpubNavigatorFragment -> navigator.goForward(shouldAnimate())
-        is PdfNavigatorFragment<*, *> -> navigator.goForward(shouldAnimate())
+        is EpubNavigatorFragment -> navigator.goForward(true)
+        is PdfNavigatorFragment<*, *> -> navigator.goForward(true)
         else -> false
     }
 
@@ -586,15 +587,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
             y > height * 0.67f -> true
             else -> return false
         }
-        val noAnim = !scrollShouldAnimate(settings)
         if (navigator is EpubNavigatorFragment) {
-            if (noAnim) {
-                val deltaPx = 0.84f * height
-                viewLifecycleOwner.lifecycleScope.launch {
-                    navigator.evaluateJavascript("window.scrollBy(0, ${if (forward) deltaPx else -deltaPx});")
-                }
-                return true
-            }
             val keepLine = if (settings.scrollKeepLine) "true" else "false"
             val duration = settings.scrollTapPageTurn.durationMs
             viewLifecycleOwner.lifecycleScope.launch {
@@ -618,12 +611,6 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                     """.trimIndent()
                 )
             }
-            return true
-        }
-        if (noAnim) {
-            val visual = navigator as? VisualNavigator ?: return false
-            val snapDelta = (height * 0.84f).toInt()
-            visual.publicationView.scrollBy(0, if (forward) snapDelta else -snapDelta)
             return true
         }
         val linePx = if (settings.scrollKeepLine) (24 * resources.displayMetrics.density).toInt() else 0
@@ -664,22 +651,43 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
     private fun restartPdfByPage(session: PdfReadiumSession, page: Int) {
         viewLifecycleOwner.lifecycleScope.launch {
             val positions = runCatching { session.publication.positions() }.getOrNull().orEmpty()
-            if (positions.isEmpty()) return@launch
-            val index = (page - 1).coerceIn(0, positions.lastIndex)
-            restartWithLocator(positions[index].toJSON().toString())
+            if (positions.isNotEmpty()) {
+                val index = (page - 1).coerceIn(0, positions.lastIndex)
+                restartWithLocator(positions[index].toJSON().toString())
+                return@launch
+            }
+            val totalPages = session.publication.metadata.numberOfPages
+                ?: session.publication.readingOrder.size
+            if (totalPages <= 0) return@launch
+            val target = page.coerceIn(1, totalPages)
+            val href = session.publication.readingOrder.firstOrNull()?.href?.toString() ?: return@launch
+            val progress = (target - 1).toDouble() / totalPages
+            val mediaType = session.publication.readingOrder.firstOrNull()?.mediaType?.toString() ?: "application/pdf"
+            val json = """{"href":"$href","type":"$mediaType","locations":{"position":$target,"page":"$target","totalProgression":${progress.coerceIn(0.0, 1.0)}}}"""
+            restartWithLocator(json)
         }
     }
 
     private fun restartPdfByProgress(session: PdfReadiumSession, progress: Double) {
         viewLifecycleOwner.lifecycleScope.launch {
-            val positions = runCatching { session.publication.positions() }.getOrNull().orEmpty()
-            if (positions.isEmpty()) return@launch
             val clamped = progress.coerceIn(0.0, 1.0)
-            val index = (clamped * positions.size).toInt().coerceIn(0, positions.lastIndex)
-            val locator = positions[index].copy(
-                locations = positions[index].locations.copy(totalProgression = clamped)
-            )
-            restartWithLocator(locator.toJSON().toString())
+            val positions = runCatching { session.publication.positions() }.getOrNull().orEmpty()
+            if (positions.isNotEmpty()) {
+                val index = (clamped * positions.size).toInt().coerceIn(0, positions.lastIndex)
+                val locator = positions[index].copy(
+                    locations = positions[index].locations.copy(totalProgression = clamped)
+                )
+                restartWithLocator(locator.toJSON().toString())
+                return@launch
+            }
+            val totalPages = session.publication.metadata.numberOfPages
+                ?: session.publication.readingOrder.size
+            if (totalPages <= 0) return@launch
+            val target = (clamped * totalPages).toInt().coerceIn(1, totalPages)
+            val href = session.publication.readingOrder.firstOrNull()?.href?.toString() ?: return@launch
+            val mediaType = session.publication.readingOrder.firstOrNull()?.mediaType?.toString() ?: "application/pdf"
+            val json = """{"href":"$href","type":"$mediaType","locations":{"position":$target,"page":"$target","totalProgression":$clamped}}"""
+            restartWithLocator(json)
         }
     }
 
@@ -826,7 +834,16 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         } else if (session is PdfReadiumSession && navigator is PdfNavigatorFragment<*, *>) {
             @Suppress("UNCHECKED_CAST")
             (navigator as PdfNavigatorFragment<org.readium.adapter.pdfium.navigator.PdfiumSettings, PdfiumPreferences>)
-                .submitPreferences(PdfiumPreferences(scroll = settings.scrollMode))
+                .submitPreferences(
+                    PdfiumPreferences(
+                        scroll = settings.scrollMode,
+                        scrollAxis = if (settings.scrollMode) {
+                            org.readium.r2.navigator.preferences.Axis.VERTICAL
+                        } else {
+                            org.readium.r2.navigator.preferences.Axis.HORIZONTAL
+                        }
+                    )
+                )
         }
     }
 
@@ -1186,14 +1203,6 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
                     publisherStyles = settings.publisherStyles,
                     forcePublisherFonts = settings.forcePublisherFonts,
                     keepScreenOn = settings.keepScreenOn,
-                    pageAnimation = when (settings.pageAnimation) {
-                        ReaderPageAnimation.SMOOTH -> "smooth"
-                        ReaderPageAnimation.SLIDE -> "slide"
-                        ReaderPageAnimation.COVER -> "cover"
-                        ReaderPageAnimation.OVERRIDE -> "override"
-                        ReaderPageAnimation.NONE -> "none"
-                    },
-                    forceTapAnimation = settings.forceTapAnimation,
                     scrollTapPageTurn = settings.scrollTapPageTurn,
                     scrollKeepLine = settings.scrollKeepLine,
                     volumeKeyPageTurn = settings.volumeKeyPageTurn,

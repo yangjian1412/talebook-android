@@ -137,8 +137,6 @@ data class ReaderDisplaySettings(
     val publisherStyles: Boolean = true,
     val forcePublisherFonts: Boolean = false,
     val keepScreenOn: Boolean = false,
-    val pageAnimation: ReaderPageAnimation = ReaderPageAnimation.SMOOTH,
-    val forceTapAnimation: Boolean = true,
     val scrollTapPageTurn: ReaderScrollTapSpeed = ReaderScrollTapSpeed.MEDIUM,
     val scrollKeepLine: Boolean = true,
     val volumeKeyPageTurn: Boolean = false,
@@ -177,14 +175,6 @@ enum class ReaderPageTurnMode {
     LEFT_RIGHT,
     RIGHT_ONLY,
     DISABLED
-}
-
-enum class ReaderPageAnimation {
-    SMOOTH,
-    SLIDE,
-    COVER,
-    OVERRIDE,
-    NONE
 }
 
 enum class ReaderScrollTapSpeed {

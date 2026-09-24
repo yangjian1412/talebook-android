@@ -21,7 +21,6 @@ import com.talebook.app.reader.LocatorProgress
 import com.talebook.app.reader.PdfReadiumSession
 import com.talebook.app.reader.ReaderDisplaySettings
 import com.talebook.app.reader.ReaderFontFamily
-import com.talebook.app.reader.ReaderPageAnimation
 import com.talebook.app.reader.ReaderPageTurnMode
 import com.talebook.app.reader.ReaderScrollTapSpeed
 import com.talebook.app.reader.ReaderTheme
@@ -101,8 +100,6 @@ data class LocalReaderUiState(
         publisherStyles = true,
         forcePublisherFonts = false,
         keepScreenOn = false,
-        pageAnimation = ReaderPageAnimation.SMOOTH,
-        forceTapAnimation = true,
         scrollTapPageTurn = ReaderScrollTapSpeed.MEDIUM,
         scrollKeepLine = true,
         volumeKeyPageTurn = false,
@@ -263,8 +260,6 @@ class LocalReaderViewModel : ViewModel() {
                                 publisherStyles = settingsRepository.readerPublisherStyles.first(),
                                 forcePublisherFonts = settingsRepository.readerForcePublisherFonts.first(),
                                 keepScreenOn = settingsRepository.readerKeepScreenOn.first(),
-                                pageAnimation = settingsRepository.readerPageAnimation.first().toReaderPageAnimation(),
-                                forceTapAnimation = settingsRepository.readerForceTapAnimation.first(),
                                 scrollTapPageTurn = settingsRepository.readerScrollTapPageTurn.first(),
                                 scrollKeepLine = settingsRepository.readerScrollKeepLine.first(),
                                 volumeKeyPageTurn = settingsRepository.readerVolumeKeyPageTurn.first(),
@@ -296,7 +291,9 @@ class LocalReaderViewModel : ViewModel() {
                                 ?.let { sid ->
                                     val pub = ReadiumSessionStore.get(sid)?.publication ?: return@let 0
                                     if (pub.conformsTo(Publication.Profile.PDF)) {
-                                        runCatching { pub.positions().size }.getOrDefault(pub.readingOrder.size)
+                                        pub.metadata.numberOfPages
+                                            ?: runCatching { pub.positions().size }.getOrNull()?.takeIf { it > 0 }
+                                            ?: pub.readingOrder.size
                                     } else {
                                         pub.readingOrder.size
                                     }
@@ -493,7 +490,9 @@ class LocalReaderViewModel : ViewModel() {
                     val pages = session?.let { sid ->
                         val pub = ReadiumSessionStore.get(sid)?.publication ?: return@let 0
                         if (pub.conformsTo(Publication.Profile.PDF)) {
-                            runCatching { pub.positions().size }.getOrDefault(pub.readingOrder.size)
+                            pub.metadata.numberOfPages
+                                ?: runCatching { pub.positions().size }.getOrNull()?.takeIf { it > 0 }
+                                ?: pub.readingOrder.size
                         } else {
                             pub.readingOrder.size
                         }
@@ -566,8 +565,6 @@ pageMargins = settingsRepository.readerPageMargins.first(),
             publisherStyles = settingsRepository.readerPublisherStyles.first(),
             forcePublisherFonts = settingsRepository.readerForcePublisherFonts.first(),
             keepScreenOn = settingsRepository.readerKeepScreenOn.first(),
-            pageAnimation = settingsRepository.readerPageAnimation.first().toReaderPageAnimation(),
-            forceTapAnimation = settingsRepository.readerForceTapAnimation.first(),
             scrollTapPageTurn = settingsRepository.readerScrollTapPageTurn.first(),
             scrollKeepLine = settingsRepository.readerScrollKeepLine.first(),
             volumeKeyPageTurn = settingsRepository.readerVolumeKeyPageTurn.first(),
@@ -786,7 +783,14 @@ private suspend fun openReadiumSession(
                 }
                 publication.conformsTo(Publication.Profile.PDF) -> {
                     val pdfEngine = PdfiumEngineProvider(
-                        PdfiumDefaults(scroll = readerSettings.scrollMode)
+                        PdfiumDefaults(
+                            scroll = readerSettings.scrollMode,
+                            scrollAxis = if (readerSettings.scrollMode) {
+                                org.readium.r2.navigator.preferences.Axis.VERTICAL
+                            } else {
+                                org.readium.r2.navigator.preferences.Axis.HORIZONTAL
+                            }
+                        )
                     )
                     PdfReadiumSession(
                         id = sessionId,
@@ -942,8 +946,6 @@ private suspend fun openReadiumSession(
         publisherStyles: Boolean = _uiState.value.readerSettings.publisherStyles,
         forcePublisherFonts: Boolean = _uiState.value.readerSettings.forcePublisherFonts,
         keepScreenOn: Boolean = _uiState.value.readerSettings.keepScreenOn,
-        pageAnimation: ReaderPageAnimation = _uiState.value.readerSettings.pageAnimation,
-        forceTapAnimation: Boolean = _uiState.value.readerSettings.forceTapAnimation,
         scrollTapPageTurn: ReaderScrollTapSpeed = _uiState.value.readerSettings.scrollTapPageTurn,
         scrollKeepLine: Boolean = _uiState.value.readerSettings.scrollKeepLine,
         volumeKeyPageTurn: Boolean = _uiState.value.readerSettings.volumeKeyPageTurn,
@@ -976,8 +978,6 @@ private suspend fun openReadiumSession(
             publisherStyles = publisherStyles,
             forcePublisherFonts = forcePublisherFonts,
             keepScreenOn = keepScreenOn,
-            pageAnimation = pageAnimation,
-            forceTapAnimation = forceTapAnimation,
             scrollTapPageTurn = scrollTapPageTurn,
             scrollKeepLine = scrollKeepLine,
             volumeKeyPageTurn = volumeKeyPageTurn,
@@ -1022,8 +1022,6 @@ private suspend fun openReadiumSession(
                 publisherStyles = settings.publisherStyles,
                 forcePublisherFonts = settings.forcePublisherFonts,
                 keepScreenOn = settings.keepScreenOn,
-                pageAnimation = settings.pageAnimation.toStorageValue(),
-                forceTapAnimation = settings.forceTapAnimation,
                 scrollTapPageTurn = settings.scrollTapPageTurn,
                 scrollKeepLine = settings.scrollKeepLine,
                 volumeKeyPageTurn = settings.volumeKeyPageTurn,
@@ -1462,22 +1460,6 @@ private fun ReaderFontFamily.toStorageValue(): String = when (this) {
     ReaderFontFamily.SANS_SERIF -> "sans_serif"
     ReaderFontFamily.MONOSPACE -> "monospace"
     ReaderFontFamily.CUSTOM -> "custom"
-}
-
-private fun String.toReaderPageAnimation(): ReaderPageAnimation = when (this) {
-    "slide" -> ReaderPageAnimation.SLIDE
-    "cover" -> ReaderPageAnimation.COVER
-    "override" -> ReaderPageAnimation.OVERRIDE
-    "none" -> ReaderPageAnimation.NONE
-    else -> ReaderPageAnimation.SMOOTH
-}
-
-private fun ReaderPageAnimation.toStorageValue(): String = when (this) {
-    ReaderPageAnimation.SMOOTH -> "smooth"
-    ReaderPageAnimation.SLIDE -> "slide"
-    ReaderPageAnimation.COVER -> "cover"
-    ReaderPageAnimation.OVERRIDE -> "override"
-    ReaderPageAnimation.NONE -> "none"
 }
 
 private fun String.toReaderPageTurnMode(): ReaderPageTurnMode = when (this) {

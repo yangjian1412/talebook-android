@@ -1070,9 +1070,9 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     version = "3.4.0alpha",
                     items = listOf(
                         "内核升级至 Readium 3.4.0。",
-                        "PDF 滚动开关生效，修复 PDF 共1页问题。",
+                        "PDF 滚动为竖向、翻页为左右横向；修复 PDF 共1页问题。",
                         "进度百分比与跳转保留两位小数。",
-                        "新增翻页动画设置。"
+                        "修复状态栏顶栏颜色未生效问题。"
                     )
                 )
                 ChangelogSection(
