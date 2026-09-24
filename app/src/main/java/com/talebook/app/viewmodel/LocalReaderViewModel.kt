@@ -18,6 +18,7 @@ import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.reader.EpubReadiumSession
 import com.talebook.app.reader.LocatorProgress
+import com.talebook.app.reader.PdfFitPolicyState
 import com.talebook.app.reader.PdfReadiumSession
 import com.talebook.app.reader.ReaderDisplaySettings
 import com.talebook.app.reader.ReaderFontFamily
@@ -782,6 +783,9 @@ private suspend fun openReadiumSession(
                     )
                 }
                 publication.conformsTo(Publication.Profile.PDF) -> {
+                    val isLandscape = context.resources.configuration.orientation ==
+                        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    PdfFitPolicyState.update(readerSettings.scrollMode, isLandscape)
                     val pdfEngine = PdfiumEngineProvider(
                         PdfiumDefaults(
                             scroll = readerSettings.scrollMode,
@@ -790,7 +794,14 @@ private suspend fun openReadiumSession(
                             } else {
                                 org.readium.r2.navigator.preferences.Axis.HORIZONTAL
                             }
-                        )
+                        ),
+                        object : PdfiumEngineProvider.Listener {
+                            override fun onConfigurePdfView(
+                                configurator: com.github.barteksc.pdfviewer.PDFView.Configurator
+                            ) {
+                                configurator.pageFitPolicy(PdfFitPolicyState.policy)
+                            }
+                        }
                     )
                     PdfReadiumSession(
                         id = sessionId,

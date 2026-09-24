@@ -417,7 +417,7 @@ fun LocalReaderScreen(
             if (tappedSessionId == sessionId) {
                 val wasVisible = barsVisible
                 ReaderBarsController.toggle()
-                if (wasVisible) {
+                if (wasVisible && !uiState.format.equals("pdf", ignoreCase = true)) {
                     ReadiumUiEvents.emitGoToLocator(sessionId, locatorJson)
                 }
             }

@@ -51,6 +51,7 @@ readium-shared = { group = "org.readium.kotlin-toolkit", name = "readium-shared"
 readium-streamer = { group = "org.readium.kotlin-toolkit", name = "readium-streamer", version.ref = "readium" }
 readium-navigator = { group = "org.readium.kotlin-toolkit", name = "readium-navigator", version.ref = "readium" }
 readium-adapter-pdfium-navigator = { group = "org.readium.kotlin-toolkit", name = "readium-adapter-pdfium-navigator", version.ref = "readium" }
+android-pdf-viewer = { group = "com.github.marain87", name = "AndroidPdfViewer", version = "3.2.8" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

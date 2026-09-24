@@ -86,9 +86,12 @@ private var lastChapterName: String = ""
                     PdfiumPreferences,
                     org.readium.adapter.pdfium.navigator.PdfiumPreferencesEditor
                 >
+                val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                PdfFitPolicyState.update(session.displaySettings.scrollMode, isLandscape)
                 factory.createFragmentFactory(
                     jumpLocator ?: session.initialLocator,
                     PdfiumPreferences(
+                        fit = PdfFitPolicyState.fitFor(session.displaySettings.scrollMode, isLandscape),
                         scroll = session.displaySettings.scrollMode,
                         scrollAxis = if (session.displaySettings.scrollMode) {
                             org.readium.r2.navigator.preferences.Axis.VERTICAL
@@ -178,10 +181,14 @@ private var lastChapterName: String = ""
                 } else if (session.displaySettings.tapPageTurn) {
                     ReaderBarsController.hide()
                     if (session.displaySettings.scrollMode) {
-                        if (session.displaySettings.scrollTapPageTurn != com.talebook.app.reader.ReaderScrollTapSpeed.OFF) {
-                            handleScrollTap(navigator, x, y, viewWidth.toFloat(), viewHeight.toFloat(), session.displaySettings)
+                        if (session is PdfReadiumSession) {
+                            true
+                        } else {
+                            if (session.displaySettings.scrollTapPageTurn != com.talebook.app.reader.ReaderScrollTapSpeed.OFF) {
+                                handleScrollTap(navigator, x, y, viewWidth.toFloat(), viewHeight.toFloat(), session.displaySettings)
+                            }
+                            true
                         }
-                        true
                     } else {
                         handlePageTurnTap(navigator, x, y, viewWidth.toFloat(), viewHeight.toFloat(), session.displaySettings.pageTurnMode)
                     }
@@ -832,10 +839,13 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
             injectBackgroundImageCss(navigator, settings)
             injectCustomFontCss(navigator, settings)
         } else if (session is PdfReadiumSession && navigator is PdfNavigatorFragment<*, *>) {
+            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            PdfFitPolicyState.update(settings.scrollMode, isLandscape)
             @Suppress("UNCHECKED_CAST")
             (navigator as PdfNavigatorFragment<org.readium.adapter.pdfium.navigator.PdfiumSettings, PdfiumPreferences>)
                 .submitPreferences(
                     PdfiumPreferences(
+                        fit = PdfFitPolicyState.fitFor(settings.scrollMode, isLandscape),
                         scroll = settings.scrollMode,
                         scrollAxis = if (settings.scrollMode) {
                             org.readium.r2.navigator.preferences.Axis.VERTICAL

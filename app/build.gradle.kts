@@ -93,6 +93,7 @@ dependencies {
     implementation(libs.readium.streamer)
     implementation(libs.readium.navigator)
     implementation(libs.readium.adapter.pdfium.navigator)
+    implementation(libs.android.pdf.viewer)
 
     // Core library desugaring（Readium 3.4 要求 2.1.5+）
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
