@@ -1,5 +1,7 @@
 ﻿# Talebook Android
 
+本项目基于 [Apache License 2.0](LICENSE) 开源。
+
 > 当前版本：`3.4.0alpha`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
