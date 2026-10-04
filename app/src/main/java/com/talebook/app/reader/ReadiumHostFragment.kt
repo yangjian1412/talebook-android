@@ -46,6 +46,7 @@ import org.readium.r2.navigator.preferences.Color as ReadiumColor
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.Url
@@ -266,7 +267,7 @@ private var lastChapterName: String = ""
                     .onEach { (targetSessionId, progress) ->
                         if (targetSessionId == sessionId) {
                             if (session is PdfReadiumSession) restartPdfByProgress(session, progress)
-                            else restartByProgress(session.publication.readingOrder, progress)
+                            else restartByProgress(session.publication, progress)
                         }
                     }
                     .launchIn(this)
@@ -627,25 +628,26 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         return true
     }
 
-private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progress: Double) {
-        val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
-        val clampedProgress = progress.coerceIn(0.0, 1.0)
-        val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
-        val targetLink = links[index]
-        val mediaType = targetLink.mediaType?.toString() ?: "application/xhtml+xml"
-        val hrefStr = targetLink.href.toString().replace("\"", "\\\"")
-        val locatorJson = """{"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":$clampedProgress}}""".trimIndent()
-        runCatching { Locator.fromJSON(JSONObject(locatorJson)) }
-            .getOrNull()
-            ?.let { navigator.go(it) }
-            ?: navigator.go(targetLink)
-    }
-
-    private fun restartByProgress(readingOrder: List<Link>, progress: Double) {
-        val links = readingOrder.takeIf { it.isNotEmpty() } ?: return
-        val clampedProgress = progress.coerceIn(0.0, 1.0)
-        val index = (clampedProgress * links.size).toInt().coerceIn(0, links.lastIndex)
-        restartWithLocator(buildLocatorJson(links[index], totalProgression = clampedProgress, readingOrder = links))
+    private fun restartByProgress(publication: Publication, progress: Double) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val clamped = progress.coerceIn(0.0, 1.0)
+            val positions = runCatching { publication.positions() }.getOrNull().orEmpty()
+            if (positions.isNotEmpty()) {
+                val target = positions.lastOrNull { (it.locations.totalProgression ?: -1.0) <= clamped }
+                    ?: positions.first()
+                val locator = target.copy(
+                    locations = target.locations.copy(totalProgression = clamped)
+                )
+                restartWithLocator(locator.toJSON().toString())
+                return@launch
+            }
+            val links = publication.readingOrder
+            if (links.isEmpty()) return@launch
+            val raw = clamped * links.size
+            val index = raw.toInt().coerceIn(0, links.lastIndex)
+            val within = (raw - index).coerceIn(0.0, 1.0)
+            restartWithLocator(buildLocatorJson(links[index], totalProgression = clamped, progression = within))
+        }
     }
 
     private fun restartByPage(readingOrder: List<Link>, page: Int) {
@@ -698,15 +700,21 @@ private fun goToProgress(readingOrder: List<Link>, navigator: Navigator, progres
         }
     }
 
-    private fun buildLocatorJson(link: Link, totalProgression: Double? = null, readingOrder: List<Link> = emptyList()): String {
+    private fun buildLocatorJson(
+        link: Link,
+        totalProgression: Double? = null,
+        readingOrder: List<Link> = emptyList(),
+        progression: Double? = null,
+    ): String {
         val mediaType = link.mediaType?.toString() ?: "application/xhtml+xml"
         val hrefStr = link.href.toString().replace("\"", "\\\"")
         val total = totalProgression
             ?: LocatorProgress.estimateTotalForLink(readingOrder, link)
-        return if (total != null)
-            """{"href":"$hrefStr","type":"$mediaType","locations":{"totalProgression":${total.coerceIn(0.0, 1.0)}}}"""
-        else
-            """{"href":"$hrefStr","type":"$mediaType","locations":{}}"""
+        val loc = buildString {
+            progression?.let { append("\"progression\":${it.coerceIn(0.0, 1.0)},") }
+            if (total != null) append("\"totalProgression\":${total.coerceIn(0.0, 1.0)}")
+        }
+        return """{"href":"$hrefStr","type":"$mediaType","locations":{$loc}}"""
     }
 
     private fun restartWithLocator(locatorJson: String) {

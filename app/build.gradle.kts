@@ -12,8 +12,8 @@ android {
         applicationId = "com.talebook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "3.4.0alpha"
+        versionCode = 18
+        versionName = "3.4.1"
     }
 
     signingConfigs {

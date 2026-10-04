@@ -692,7 +692,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v3.4.0alpha",
+                text = "Tale Book v3.4.1",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -1067,8 +1067,9 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 ChangelogSection(
-                    version = "3.4.0alpha",
+                    version = "3.4.1",
                     items = listOf(
+                        "修复百分比跳转始终落在最近章节开头的问题（按真实页定位）。",
                         "内核升级至 Readium 3.4.0。",
                         "PDF 滚动为竖向、翻页为左右横向；修复 PDF 共1页问题。",
                         "进度百分比与跳转保留两位小数。",

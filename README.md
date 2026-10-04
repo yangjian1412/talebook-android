@@ -2,11 +2,16 @@
 
 本项目基于 [Apache License 2.0](LICENSE) 开源。
 
-> 当前版本：`3.4.0alpha`
+> 当前版本：`3.4.1`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 3.4.1 更新日志
+
+- 修复 EPUB 百分比跳转始终落在最近章节开头的问题：使用 `publication.positions()` 按真实页定位。
+- 清理未使用的 `goToProgress()` 死代码。
 
 ### 3.4.0alpha 更新日志
 
