@@ -134,6 +134,9 @@ interface ReaderDao {
     @Query("SELECT * FROM local_book WHERE id = :id LIMIT 1")
     suspend fun getLocalBook(id: Long): LocalBookEntity?
 
+    @Query("SELECT * FROM local_book WHERE documentUri = :documentUri LIMIT 1")
+    suspend fun getLocalBookByDocumentUri(documentUri: String): LocalBookEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLocalBook(book: LocalBookEntity): Long
 

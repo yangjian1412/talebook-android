@@ -1,7 +1,9 @@
 ﻿package com.talebook.app
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -11,6 +13,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
@@ -19,6 +22,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
 import androidx.fragment.app.FragmentActivity
+import com.talebook.app.data.repository.LocalLibraryRepository
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.ui.navigation.NavGraph
@@ -34,6 +38,9 @@ class MainActivity : FragmentActivity() {
     var currentReaderSessionId: Long? = null
     var currentReaderScrollMode: Boolean = false
 
+    /** 从文件管理器等外部来源打开的书籍,待导航到阅读器 */
+    private val pendingExternalBookId = mutableStateOf<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -41,7 +48,7 @@ class MainActivity : FragmentActivity() {
         val startBookId = intent.getIntExtra("bookId", 0)
         android.util.Log.d(
             "TaleMain",
-            "onCreate intent extras: forceDark=$forceDark startBookId=$startBookId"
+            "onCreate intent extras: forceDark=$forceDark startBookId=$startBookId action=${intent.action}"
         )
         if (forceDark) {
             lifecycleScope.launch {
@@ -50,6 +57,7 @@ class MainActivity : FragmentActivity() {
                 android.util.Log.d("TaleMain", "forceDark: themeMode 写入 DataStore 为 DARK")
             }
         }
+        handleViewIntent(intent)
 
         enableEdgeToEdge()
         applyGlobalSystemBars()
@@ -79,7 +87,11 @@ class MainActivity : FragmentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
-                    NavGraph(navController = navController)
+                    NavGraph(
+                        navController = navController,
+                        pendingExternalBookId = pendingExternalBookId.value,
+                        onExternalBookHandled = { pendingExternalBookId.value = null }
+                    )
                 }
             }
         }
@@ -90,6 +102,32 @@ class MainActivity : FragmentActivity() {
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller.hide(WindowInsetsCompat.Type.navigationBars())
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleViewIntent(intent)
+    }
+
+    private fun handleViewIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val mime = intent.type ?: contentResolver.getType(uri)
+        android.util.Log.d("TaleMain", "ACTION_VIEW uri=$uri mime=$mime")
+        lifecycleScope.launch {
+            val id = LocalLibraryRepository(applicationContext)
+                .importExternalDocument(uri, mime)
+            if (id != null) {
+                pendingExternalBookId.value = id
+            } else {
+                Toast.makeText(
+                    this@MainActivity,
+                    "暂不支持从外部打开该格式的文件",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

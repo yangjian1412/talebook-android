@@ -692,7 +692,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v3.4.1",
+                text = "Tale Book v3.4.2",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -1066,6 +1066,13 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .heightIn(max = 480.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                ChangelogSection(
+                    version = "3.4.2",
+                    items = listOf(
+                        "支持从文件管理器等外部应用直接打开 EPUB / PDF / TXT 文件。",
+                        "在系统「打开方式」中可选择本应用作为默认阅读器。"
+                    )
+                )
                 ChangelogSection(
                     version = "3.4.1",
                     items = listOf(

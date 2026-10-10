@@ -2,11 +2,16 @@
 
 本项目基于 [Apache License 2.0](LICENSE) 开源。
 
-> 当前版本：`3.4.1`
+> 当前版本：`3.4.2`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 3.4.2 更新日志
+
+- 支持从文件管理器等外部应用直接打开 EPUB / PDF / TXT 文件（`ACTION_VIEW`）。
+- 在系统「打开方式」中可选择本应用作为默认阅读器。
 
 ### 3.4.1 更新日志
 

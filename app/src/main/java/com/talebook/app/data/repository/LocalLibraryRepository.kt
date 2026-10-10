@@ -107,6 +107,59 @@ class LocalLibraryRepository(private val context: Context) {
         ReaderDatabase.get(context).readerDao().deleteLocalBook(bookId)
     }
 
+    /**
+     * Imports a document handed to us by another app via ACTION_VIEW
+     * (file manager "open with"). Returns the localBookId, or null when the
+     * format is not supported for external opening.
+     */
+    suspend fun importExternalDocument(uri: Uri, mime: String?): Long? = withContext(Dispatchers.IO) {
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: SecurityException) {
+            // 调用方可能没有授予持久化权限（ACTION_VIEW 通常是临时授权），忽略
+        }
+        val displayName = queryDisplayName(uri) ?: uri.lastPathSegment ?: "未知文件"
+        val format = inferFormat(displayName, mime.orEmpty())
+        if (format != "epub" && format != "pdf" && format != "txt") return@withContext null
+        val dao = ReaderDatabase.get(context).readerDao()
+        val uriString = uri.toString()
+        val existing = dao.getLocalBookByDocumentUri(uriString)
+        if (existing != null) {
+            dao.touchLocalBook(existing.id, System.currentTimeMillis())
+            if (!existing.available) {
+                dao.updateLocalBookAvailability(existing.id, null, true, readSize(uri))
+            }
+            return@withContext existing.id
+        }
+        dao.upsertLocalBook(
+            LocalBookEntity(
+                folderId = null,
+                documentUri = uriString,
+                displayName = displayName,
+                relativePath = displayName,
+                format = format,
+                sizeBytes = readSize(uri),
+                available = true,
+                lastReadAt = System.currentTimeMillis(),
+                importedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && !cursor.isNull(idx)) cursor.getString(idx) else null
+                } else null
+            }
+        }.getOrNull()
+    }
+
     suspend fun touchBook(bookId: Long) = withContext(Dispatchers.IO) {
         ReaderDatabase.get(context).readerDao().touchLocalBook(bookId, System.currentTimeMillis())
     }

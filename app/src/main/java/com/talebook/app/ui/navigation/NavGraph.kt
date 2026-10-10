@@ -2,10 +2,13 @@
 
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -18,10 +21,26 @@ import com.talebook.app.ui.screens.*
 import kotlinx.coroutines.launch
 
 @Composable
-fun NavGraph(navController: NavHostController = rememberNavController()) {
+fun NavGraph(
+    navController: NavHostController = rememberNavController(),
+    pendingExternalBookId: Long? = null,
+    onExternalBookHandled: () -> Unit = {},
+) {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
     val scope = rememberCoroutineScope()
+    // 外部打开书籍已接管导航后，置位并让 splash 的回调不再压栈。
+    // 否则 splash 的 verify() 回调可能在外部 navigate 之后才执行，
+    // 此时 popUpTo("splash") 找不到 splash 变成空操作，把 home 压到 reader 之上。
+    var externalNavTaken by remember { mutableStateOf(false) }
+    LaunchedEffect(pendingExternalBookId) {
+        val id = pendingExternalBookId ?: return@LaunchedEffect
+        externalNavTaken = true
+        navController.navigate("local_reader/local/$id") {
+            popUpTo(0) { inclusive = true }
+        }
+        onExternalBookHandled()
+    }
     NavHost(
         navController = navController,
         startDestination = "splash"
@@ -30,11 +49,13 @@ fun NavGraph(navController: NavHostController = rememberNavController()) {
             SplashScreen(
                 settingsRepository = settingsRepository,
                 onGoHome = {
+                    if (externalNavTaken) return@SplashScreen
                     navController.navigate("home") {
                         popUpTo("splash") { inclusive = true }
                     }
                 },
                 onGoLogin = {
+                    if (externalNavTaken) return@SplashScreen
                     navController.navigate("login") {
                         popUpTo("splash") { inclusive = true }
                     }
