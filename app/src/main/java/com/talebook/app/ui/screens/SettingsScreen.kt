@@ -1067,6 +1067,13 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 ChangelogSection(
+                    version = "3.4.3beta3",
+                    items = listOf(
+                        "关闭「外屏显示封面」功能、退出阅读器、退出应用时，会给外屏下电（只关应用自己点亮的那块屏）。",
+                        "系统或 adb 点亮的外屏不由本应用下电；发生折叠后外屏成为当前屏幕时也不下电。"
+                    )
+                )
+                ChangelogSection(
                     version = "3.4.3beta2",
                     items = listOf(
                         "阅读器顶栏新增「外屏显示封面」入口：只在使用内屏时出现，实心封面图标表示已开启，线框图标表示已关闭。",
