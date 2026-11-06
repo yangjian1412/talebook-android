@@ -34,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TAG = "TaleCoverScreen"
 
@@ -280,6 +281,8 @@ class CoverScreenController(private val activity: Activity) {
         if (display == null) {
             // 合上手机时外屏会变成当前屏幕，这时必须收起封面窗口，否则会盖在阅读界面上。
             dismissPresentation()
+            // 上次被我们禁用过的外屏不在可用列表里，先把它启用回来，下一轮再画。
+            CoverScreenPower.reenableDisabledDisplay(activity, currentDisplayId())
             if (outerScreenAvailable) {
                 outerScreenAvailable = false
                 Log.d(TAG, "外屏已不可用（发生折叠），通知界面关闭开关")
@@ -458,6 +461,7 @@ class CoverScreenController(private val activity: Activity) {
 
     /** 点亮成功：日志里写明走的是哪条路，便于换机型对比。 */
     private fun markDisplayPoweredOn(displayId: Int, path: String) {
+        CoverScreenPower.clearDisabled(activity)
         CoverScreenPower.markCoverDisplayInUse(activity, displayId)
         Log.d(TAG, "已点亮外屏 id=$displayId（$path）")
         // 命令返回成功不等于真给了电，过一会儿复查一次，没生效就再试 power-reset。
@@ -634,6 +638,7 @@ object CoverScreenPower {
 
     private const val PREFS_NAME = "cover_screen_power"
     private const val KEY_COVER_DISPLAY = "cover_display_id"
+    private const val KEY_DISABLED_DISPLAY = "disabled_display_id"
     private const val NO_DISPLAY = -1
 
     /** 系统的关电接口名（都是 @SystemApi，按顺序试）。 */
@@ -689,7 +694,7 @@ object CoverScreenPower {
         context.getSystemService(DisplayManager::class.java)?.getDisplay(displayId)
     }.getOrNull()
 
-    /** 记下这块屏是我们点亮的：应用被强杀时才有东西可补。 */
+    /** 记下这块屏我们在用：退出时该下电，中途被强杀也有记录可补。 */
     fun markCoverDisplayInUse(context: Context, displayId: Int) {
         prefs(context).edit().putInt(KEY_COVER_DISPLAY, displayId).apply()
     }
@@ -698,28 +703,91 @@ object CoverScreenPower {
         prefs(context).edit().remove(KEY_COVER_DISPLAY).apply()
     }
 
-    /** 给指定屏幕下电：系统接口 → cmd display power-off → cmd display power-reset。 */
+    /** 被我们禁用过的外屏：下次要用时得先把它启用回来。 */
+    private fun markDisabled(context: Context, displayId: Int) {
+        prefs(context).edit().putInt(KEY_DISABLED_DISPLAY, displayId).apply()
+    }
+
+    fun clearDisabled(context: Context) {
+        prefs(context).edit().remove(KEY_DISABLED_DISPLAY).apply()
+    }
+
+    /**
+     * 让那块屏不带电：系统接口 → cmd display power-off → cmd display disable-display。
+     *
+     * 每一步之后都复查一次电源状态。实测这台机器上 power-off 常常只是临时熄灭，
+     * 系统会因为这块屏仍处于「已启用」状态立刻把它点亮，只有 disable-display 压得住。
+     */
     fun powerOff(context: Context, displayId: Int) {
-        clearCoverDisplayInUse(context)
-        if (tryPowerOffApi(context, displayId)) {
-            verifyPoweredOff(context, displayId)
+        if (powerOffInFlight) {
+            Log.d(TAG, "下电已经在进行中，不重复请求 id=$displayId")
             return
         }
-        runDisplayCommand("power-off", displayId) { failure ->
-            if (failure == null) {
-                Log.d(TAG, "已给外屏下电 id=$displayId（命令 cmd display power-off）")
-                verifyPoweredOff(context, displayId)
-                return@runDisplayCommand
-            }
-            Log.w(TAG, "命令下电失败：$failure，改试 power-reset")
-            runDisplayCommand("power-reset", displayId) { fallback ->
-                if (fallback == null) {
-                    Log.d(TAG, "已把外屏电源交回系统 id=$displayId（命令 cmd display power-reset）")
-                    verifyPoweredOff(context, displayId)
+        powerOffInFlight = true
+        clearCoverDisplayInUse(context)
+        scope.launch {
+            try {
+                if (tryPowerOffApi(context, displayId) && confirmPoweredOff(context, displayId, "系统接口")) return@launch
+                val powerOffFailure = runCommand("power-off", displayId)
+                if (powerOffFailure == null) {
+                    Log.d(TAG, "已给外屏下电 id=$displayId（命令 cmd display power-off）")
+                    if (confirmPoweredOff(context, displayId, "命令 cmd display power-off")) return@launch
                 } else {
-                    markCoverDisplayInUse(context, displayId)
-                    Log.w(TAG, "外屏下电失败：$fallback，这块屏会亮到系统自己关；下次启动会再试一次")
+                    Log.w(TAG, "命令下电失败：$powerOffFailure，改试 disable-display")
                 }
+                val disableFailure = runCommand("disable-display", displayId)
+                when {
+                    disableFailure != null -> {
+                        markCoverDisplayInUse(context, displayId)
+                        Log.w(TAG, "禁用外屏电源也失败：$disableFailure，这块屏会亮到系统自己关；下次启动会再试一次")
+                    }
+
+                    confirmPoweredOff(context, displayId, "命令 cmd display disable-display") -> {
+                        markDisabled(context, displayId)
+                        Log.d(TAG, "已禁用外屏电源 id=$displayId（命令 cmd display disable-display），要用时会重新启用")
+                    }
+
+                    else -> {
+                        markCoverDisplayInUse(context, displayId)
+                        Log.w(TAG, "禁用外屏后仍然亮：系统坚持要给这块屏供电，只能等息屏或折叠")
+                    }
+                }
+            } finally {
+                powerOffInFlight = false
+            }
+        }
+    }
+
+    /** 一次下电流程同时在跑的时候不再重复触发。 */
+    private var powerOffInFlight = false
+
+    /** 等一会儿再读电源状态，确认真的没电；返回 true 表示已经不带电。 */
+    private suspend fun confirmPoweredOff(context: Context, displayId: Int, via: String): Boolean {
+        delay(VERIFY_DELAY_MS)
+        val state = stateOf(context, displayId)
+        val name = stateName(state)
+        return if (state in LIT_STATES) {
+            Log.d(TAG, "下电后复查 id=$displayId state=$name：$via 没让屏幕熄灭")
+            false
+        } else {
+            Log.d(TAG, "下电后复查 id=$displayId state=$name：已经不带电（$via）")
+            true
+        }
+    }
+
+    /**
+     * 上次被我们禁用过的外屏，要用的时候先启用回来。
+     * 没有这个标记、或那块屏现在是当前屏幕（发生折叠）时什么都不做。
+     */
+    fun reenableDisabledDisplay(context: Context, currentDisplayId: Int?) {
+        val displayId = prefs(context).getInt(KEY_DISABLED_DISPLAY, NO_DISPLAY)
+        if (displayId == NO_DISPLAY || displayId == currentDisplayId) return
+        runDisplayCommand("enable-display", displayId) { failure ->
+            if (failure == null) {
+                clearDisabled(context)
+                Log.d(TAG, "已重新启用被禁用的外屏 id=$displayId（命令 cmd display enable-display）")
+            } else {
+                Log.w(TAG, "重新启用外屏 id=$displayId 失败：$failure")
             }
         }
     }
@@ -750,47 +818,27 @@ object CoverScreenPower {
 
     /** 在后台执行一次 cmd display <子命令> <id>；回调给出失败原因，null 表示成功。 */
     fun runDisplayCommand(subcommand: String, displayId: Int, onResult: (String?) -> Unit) {
-        scope.launch(Dispatchers.IO) {
-            val failure = runCatching {
-                val process = Runtime.getRuntime().exec(
-                    arrayOf("cmd", "display", subcommand, displayId.toString())
-                )
-                if (!process.waitFor(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    process.destroyForcibly()
-                    "命令超时"
-                } else {
-                    val error = process.errorStream.bufferedReader().use { reader -> reader.readText() }.trim()
-                    when {
-                        process.exitValue() != 0 -> "退出码 ${process.exitValue()}"
-                        error.isNotEmpty() -> error.lineSequence().firstOrNull()?.trim().orEmpty()
-                        else -> null
-                    }
-                }
-            }.getOrElse { error -> error.message ?: error.toString() }
-            scope.launch { onResult(failure) }
-        }
+        scope.launch { onResult(runCommand(subcommand, displayId)) }
     }
 
-    /** 下电之后回头看一眼，电源状态直接写进日志，不必只靠外部 dumpsys 判断。 */
-    private fun verifyPoweredOff(context: Context, displayId: Int) {
-        scope.launch {
-            delay(VERIFY_DELAY_MS)
-            val state = stateOf(context, displayId)
-            val name = stateName(state)
-            when {
-                state in LIT_STATES -> {
-                    markCoverDisplayInUse(context, displayId)
-                    Log.w(
-                        TAG,
-                        "下电后复查 id=$displayId state=$name：下电没生效，系统仍认为这块屏该亮；" +
-                            "它要到息屏或折叠才会灭，下次启动会再试一次"
-                    )
+    /** 执行一次 cmd display <子命令> <id>；返回失败原因，null 表示成功。 */
+    private suspend fun runCommand(subcommand: String, displayId: Int): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val process = Runtime.getRuntime().exec(
+                arrayOf("cmd", "display", subcommand, displayId.toString())
+            )
+            if (!process.waitFor(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly()
+                "命令超时"
+            } else {
+                val error = process.errorStream.bufferedReader().use { reader -> reader.readText() }.trim()
+                when {
+                    process.exitValue() != 0 -> "退出码 ${process.exitValue()}"
+                    error.isNotEmpty() -> error.lineSequence().firstOrNull()?.trim().orEmpty()
+                    else -> null
                 }
-
-                state < 0 -> Log.d(TAG, "下电后复查 id=$displayId state=$name")
-                else -> Log.d(TAG, "下电后复查 id=$displayId state=$name：已经不带电")
             }
-        }
+        }.getOrElse { error -> error.message ?: error.toString() }
     }
 
     /**
