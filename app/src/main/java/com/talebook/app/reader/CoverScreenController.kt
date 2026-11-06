@@ -80,6 +80,9 @@ class CoverScreenController(private val activity: Activity) {
     private var triedPowerOn = false
     private var outerScreenAvailable = false
 
+    /** 最近一次拿来画封面的外屏 id，只用于日志说明「这块屏不是我们点亮的」。 */
+    private var lastTargetDisplayId: Int? = null
+
     /**
      * 由本应用点亮的外屏 id。只有这块屏才由我们负责下电，
      * 系统自己点亮、或用 adb 点亮的一律不动。
@@ -166,6 +169,7 @@ class CoverScreenController(private val activity: Activity) {
         allowDirectDisplay = false
         rearArea = null
         outerScreenAvailable = false
+        lastTargetDisplayId = null
         onOuterScreenLost = null
         loggedInventory = false
         loggedWindowAreas = false
@@ -276,6 +280,7 @@ class CoverScreenController(private val activity: Activity) {
             return
         }
         outerScreenAvailable = true
+        lastTargetDisplayId = display.displayId
         noteTargetPowerState(display)
         val existing = presentation
         if (existing != null) {
@@ -339,11 +344,11 @@ class CoverScreenController(private val activity: Activity) {
         if (state == lastTargetState) return
         lastTargetState = state
         if (state == Display.STATE_ON) {
-            Log.d(TAG, "外屏 id=${display.displayId} 已点亮（state=ON），封面应当已经显示")
+            Log.d(TAG, "外屏 id=${display.displayId} state=${CoverScreenPower.stateName(state)}，封面应当已经显示")
         } else {
             Log.w(
                 TAG,
-                "外屏 id=${display.displayId} 未点亮（state=$state），画上去也不会显示。" +
+                "外屏 id=${display.displayId} state=${CoverScreenPower.stateName(state)}，画上去也不会显示。" +
                     "实测这类机型展开态默认只给内屏供电，可试 adb shell cmd display enable-display ${display.displayId}"
             )
             tryPowerOnSecondaryDisplay(display)
@@ -371,7 +376,7 @@ class CoverScreenController(private val activity: Activity) {
                 for (display in visible) {
                     append("  id=").append(display.displayId)
                     append(" 尺寸=").append(display.width).append('x').append(display.height)
-                    append(" state=").append(CoverScreenPower.stateOf(display))
+                    append(" state=").append(CoverScreenPower.stateName(CoverScreenPower.stateOf(display)))
                     append(" flags=").append(Integer.toHexString(display.flags))
                     append(" 标记为副屏=").append(display.flags and Display.FLAG_PRESENTATION != 0)
                     appendLine()
@@ -441,6 +446,8 @@ class CoverScreenController(private val activity: Activity) {
         poweredOnDisplayId = displayId
         CoverScreenPower.markPoweredUp(activity, displayId)
         Log.d(TAG, "已点亮外屏 id=$displayId（$path）")
+        // 命令返回成功不等于真给了电，过一会儿复查一次，没生效就再试 power-reset。
+        CoverScreenPower.verifyPoweredUp(activity, displayId)
     }
 
     /**
@@ -448,7 +455,12 @@ class CoverScreenController(private val activity: Activity) {
      * 系统自己点亮或用 adb 点亮的屏幕不归我们管；发生折叠后那块屏就是当前屏幕，也不能下电。
      */
     private fun powerOffDisplayWePoweredUp() {
-        val displayId = poweredOnDisplayId ?: return
+        val displayId = poweredOnDisplayId
+        if (displayId == null) {
+            // 这块屏的电不是我们给的不是漏跑：可能是系统自己给的，也可能是 adb 点的，都不归我们关。
+            lastTargetDisplayId?.let { target -> Log.d(TAG, "不下电：id=$target 的电不是本应用给的") }
+            return
+        }
         poweredOnDisplayId = null
         if (displayId == currentDisplayId()) {
             Log.d(TAG, "不下电：id=$displayId 现在是当前屏幕（发生折叠）")
@@ -462,7 +474,10 @@ class CoverScreenController(private val activity: Activity) {
             return
         }
         if (CoverScreenPower.isOff(display)) {
-            Log.d(TAG, "不下电：外屏 id=$displayId 已经没有电（state=${CoverScreenPower.stateOf(display)}）")
+            Log.d(
+                TAG,
+                "不下电：外屏 id=$displayId 已经没有电（state=${CoverScreenPower.stateName(CoverScreenPower.stateOf(display))}）"
+            )
             CoverScreenPower.clearPoweredUp(activity)
             return
         }
@@ -622,15 +637,12 @@ object CoverScreenPower {
     /** 下电之后复查电源状态的等待时间。 */
     private const val VERIFY_DELAY_MS = 1_500L
 
-    /** Display.STATE_DIM，这个常量不公开，按值传。 */
-    private const val STATE_DIM = 1
-
-    /** Display.STATE_* 里算「带电」的取值。 */
+    /** Display.STATE_* 里算「带电」的取值（UNKNOWN/OFF 都不算）。 */
     private val LIT_STATES = setOf(
         Display.STATE_ON,
-        STATE_DIM,
         Display.STATE_DOZE,
         Display.STATE_DOZE_SUSPEND,
+        Display.STATE_VR,
         Display.STATE_ON_SUSPEND
     )
 
@@ -643,6 +655,19 @@ object CoverScreenPower {
     }
 
     fun stateOf(context: Context, displayId: Int): Int = displayOf(context, displayId)?.let { stateOf(it) } ?: -1
+
+    /** 日志里把电源状态写成可读的名字，不用再对照数值。 */
+    fun stateName(state: Int): String = when (state) {
+        -1 -> "读不到(系统版本太旧)"
+        Display.STATE_UNKNOWN -> "UNKNOWN"
+        Display.STATE_OFF -> "OFF(不给电)"
+        Display.STATE_ON -> "ON(亮着)"
+        Display.STATE_DOZE -> "DOZE"
+        Display.STATE_DOZE_SUSPEND -> "DOZE_SUSPEND"
+        Display.STATE_VR -> "VR"
+        Display.STATE_ON_SUSPEND -> "ON_SUSPEND"
+        else -> "未知数值$state"
+    }
 
     fun isLit(display: Display): Boolean = stateOf(display) in LIT_STATES
 
@@ -705,7 +730,7 @@ object CoverScreenPower {
         }
         if (!isLit(display)) {
             clearPoweredUp(activity)
-            Log.d(TAG, "补做下电跳过：id=$displayId 已经没有电（state=${stateOf(display)}）")
+            Log.d(TAG, "补做下电跳过：id=$displayId 已经没有电（state=${stateName(stateOf(display))}）")
             return
         }
         Log.d(TAG, "补做上次留下的外屏下电 id=$displayId")
@@ -740,14 +765,38 @@ object CoverScreenPower {
         scope.launch {
             delay(VERIFY_DELAY_MS)
             val state = stateOf(context, displayId)
+            val name = stateName(state)
             when {
                 state in LIT_STATES -> {
                     markPoweredUp(context, displayId)
-                    Log.w(TAG, "下电后复查 id=$displayId state=$state：命令执行成功但屏幕还有电，下次启动会再试一次")
+                    Log.w(TAG, "下电后复查 id=$displayId state=$name：命令执行成功但屏幕还有电，下次启动会再试一次")
                 }
 
-                state < 0 -> Log.d(TAG, "下电后复查 id=$displayId：系统不给读电源状态")
-                else -> Log.d(TAG, "下电后复查 id=$displayId state=$state：已经不带电")
+                state < 0 -> Log.d(TAG, "下电后复查 id=$displayId state=$name")
+                else -> Log.d(TAG, "下电后复查 id=$displayId state=$name：已经不带电")
+            }
+        }
+    }
+
+    /**
+     * 点屏之后复查一次。命令返回成功但屏幕其实没电时（实测这台机器偶尔这样），
+     * 再试一次 power-reset 把电源状态交回系统决定。
+     */
+    fun verifyPoweredUp(context: Context, displayId: Int) {
+        scope.launch {
+            delay(VERIFY_DELAY_MS)
+            val state = stateOf(context, displayId)
+            if (state == Display.STATE_ON || state == Display.STATE_ON_SUSPEND) {
+                Log.d(TAG, "点屏后复查 id=$displayId state=${stateName(state)}")
+                return@launch
+            }
+            Log.w(TAG, "点屏后复查 id=$displayId state=${stateName(state)}：点屏命令说成功了但屏幕没电，改试 power-reset")
+            runDisplayCommand("power-reset", displayId) { failure ->
+                if (failure == null) {
+                    Log.d(TAG, "已请求系统决定外屏电源 id=$displayId（命令 cmd display power-reset）")
+                } else {
+                    Log.w(TAG, "power-reset 也不起作用：$failure，这台机型可能要外部命令才给外屏供电")
+                }
             }
         }
     }
