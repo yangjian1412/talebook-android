@@ -118,6 +118,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.talebook.app.reader.CoverScreenController
 import com.talebook.app.reader.ReaderBarsController
@@ -411,6 +413,25 @@ fun LocalReaderScreen(
         onDispose {
             controller?.onOuterScreenLost = null
             controller?.release()
+        }
+    }
+
+    // 退到后台（切到别的应用、从最近任务划掉）时收起外屏封面并给那块屏下电，回到前台自动恢复。
+    DisposableEffect(coverController, activity) {
+        val controller = coverController
+        val owner = activity
+        if (controller != null && owner != null) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_STOP -> controller.suspendForBackground()
+                    Lifecycle.Event.ON_START -> controller.resumeAfterBackground()
+                    else -> Unit
+                }
+            }
+            owner.lifecycle.addObserver(observer)
+            onDispose { owner.lifecycle.removeObserver(observer) }
+        } else {
+            onDispose { }
         }
     }
 

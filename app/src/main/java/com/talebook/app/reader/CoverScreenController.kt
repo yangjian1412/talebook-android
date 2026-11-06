@@ -50,9 +50,10 @@ private const val TAG = "TaleCoverScreen"
  * 这时直接用 Presentation 往那块屏画封面。这类机型展开态默认只给内屏供电，
  * 所以这里会自己尝试点亮外屏一次：先试系统的点亮屏幕接口，再试 cmd display enable-display，
  * 两者都失败时把原因写进日志。
- * 自己点亮的那块屏由自己负责关电：关闭开关、退出阅读器、退出应用时会给它下电
- * （先试 cmd display power-off，再试 power-reset）；系统或别的途径点亮的一律不动，
- * 发生折叠后那块屏会变成当前屏幕，这时也不下电。
+ * 画过封面的那块外屏由自己负责关电：关闭开关、退到后台、退出阅读器、退出应用时会给它下电
+ * （先试系统关电接口，再试 cmd display power-off，最后 power-reset）。
+ * 不问电是谁给的——展开态下这块屏只有被 enable 过才会有电，那次往往就是上一轮我们自己调的；
+ * 发生折叠后那块屏会变成当前屏幕，这时不下电。
  * 另外监听屏幕状态变化：外屏被系统关掉电（熄屏、省电）之后，封面会自动重新点亮，
  * 不需要重新打开开关；应用被强制停止而来不及下电时，下次启动会补做（见 CoverScreenPower）。
  * 另有备用触发方式：把全局设置 talebook_cover_debug 置为 1（供 adb 调试用）。
@@ -80,14 +81,8 @@ class CoverScreenController(private val activity: Activity) {
     private var triedPowerOn = false
     private var outerScreenAvailable = false
 
-    /** 最近一次拿来画封面的外屏 id，只用于日志说明「这块屏不是我们点亮的」。 */
+    /** 最近一次拿来画封面的外屏 id：停止显示时给这块屏下电。 */
     private var lastTargetDisplayId: Int? = null
-
-    /**
-     * 由本应用点亮的外屏 id。只有这块屏才由我们负责下电，
-     * 系统自己点亮、或用 adb 点亮的一律不动。
-     */
-    private var poweredOnDisplayId: Int? = null
 
     /**
      * 外屏因为折叠而不再可用时通知调用方（界面用它把开关关掉）。
@@ -161,6 +156,24 @@ class CoverScreenController(private val activity: Activity) {
         wantedCoverPath = null
         allowDirectDisplay = false
         stopShowing()
+    }
+
+    /**
+     * 退到后台：收起外屏封面并给那块屏下电，但保留「要显示封面」这个意图，
+     * 回到前台时 resumeAfterBackground 会把它显示回去。
+     */
+    fun suspendForBackground() {
+        if (wantedCoverPath == null) return
+        Log.d(TAG, "退到后台，暂时收起外屏封面")
+        stopWindowAreaSession()
+        stopDirectDisplay()
+    }
+
+    /** 回到前台：接着显示封面（那块屏没电时会重新点亮）。 */
+    fun resumeAfterBackground() {
+        if (wantedCoverPath == null) return
+        Log.d(TAG, "回到前台，重新显示外屏封面")
+        syncSession()
     }
 
     /** 离开阅读器时调用，释放外屏。 */
@@ -281,6 +294,8 @@ class CoverScreenController(private val activity: Activity) {
         }
         outerScreenAvailable = true
         lastTargetDisplayId = display.displayId
+        // 从这一刻起这块屏算我们在用，退出时该下电；中途被强杀也有记录可补。
+        CoverScreenPower.markCoverDisplayInUse(activity, display.displayId)
         noteTargetPowerState(display)
         val existing = presentation
         if (existing != null) {
@@ -441,36 +456,32 @@ class CoverScreenController(private val activity: Activity) {
         }
     }
 
-    /** 点亮成功：记下这块屏归我们管（只有我们能下电），日志里写明走的是哪条路，便于换机型对比。 */
+    /** 点亮成功：日志里写明走的是哪条路，便于换机型对比。 */
     private fun markDisplayPoweredOn(displayId: Int, path: String) {
-        poweredOnDisplayId = displayId
-        CoverScreenPower.markPoweredUp(activity, displayId)
+        CoverScreenPower.markCoverDisplayInUse(activity, displayId)
         Log.d(TAG, "已点亮外屏 id=$displayId（$path）")
         // 命令返回成功不等于真给了电，过一会儿复查一次，没生效就再试 power-reset。
         CoverScreenPower.verifyPoweredUp(activity, displayId)
     }
 
     /**
-     * 给我们自己点亮过的外屏下电：关闭功能、退出阅读器、退出应用都会走到这里。
-     * 系统自己点亮或用 adb 点亮的屏幕不归我们管；发生折叠后那块屏就是当前屏幕，也不能下电。
+     * 给画封面用的那块外屏下电：关闭功能、退到后台、退出阅读器、退出应用都会走到这里。
+     * 不问电是谁给的：展开态下这块屏只有被 enable 过才会有电，那次往往就是上一轮我们自己调的。
+     * 发生折叠后那块屏就是当前屏幕，那时不能下电。
      */
-    private fun powerOffDisplayWePoweredUp() {
-        val displayId = poweredOnDisplayId
-        if (displayId == null) {
-            // 这块屏的电不是我们给的不是漏跑：可能是系统自己给的，也可能是 adb 点的，都不归我们关。
-            lastTargetDisplayId?.let { target -> Log.d(TAG, "不下电：id=$target 的电不是本应用给的") }
-            return
-        }
-        poweredOnDisplayId = null
+    private fun powerOffCoverDisplay() {
+        val displayId = lastTargetDisplayId ?: findSecondaryDisplay()?.displayId
+        lastTargetDisplayId = null
+        if (displayId == null) return
         if (displayId == currentDisplayId()) {
             Log.d(TAG, "不下电：id=$displayId 现在是当前屏幕（发生折叠）")
-            CoverScreenPower.clearPoweredUp(activity)
+            CoverScreenPower.clearCoverDisplayInUse(activity)
             return
         }
         val display = CoverScreenPower.displayOf(activity, displayId)
         if (display == null) {
             Log.d(TAG, "不下电：id=$displayId 的屏幕已经不在了")
-            CoverScreenPower.clearPoweredUp(activity)
+            CoverScreenPower.clearCoverDisplayInUse(activity)
             return
         }
         if (CoverScreenPower.isOff(display)) {
@@ -478,7 +489,7 @@ class CoverScreenController(private val activity: Activity) {
                 TAG,
                 "不下电：外屏 id=$displayId 已经没有电（state=${CoverScreenPower.stateName(CoverScreenPower.stateOf(display))}）"
             )
-            CoverScreenPower.clearPoweredUp(activity)
+            CoverScreenPower.clearCoverDisplayInUse(activity)
             return
         }
         CoverScreenPower.powerOff(activity, displayId)
@@ -521,8 +532,8 @@ class CoverScreenController(private val activity: Activity) {
         triedPowerOn = false
         lastTargetState = Int.MIN_VALUE
         dismissPresentation()
-        // 归我们管的屏幕由我们关电：关闭功能、退出阅读器、退出应用都走这里。
-        powerOffDisplayWePoweredUp()
+        // 画封面用的那块外屏由我们负责关电：关闭功能、退到后台、退出阅读器、退出应用都走这里。
+        powerOffCoverDisplay()
     }
 
     /** 只收起外屏上的封面窗口，不动等待轮询。 */
@@ -615,14 +626,14 @@ class CoverScreenController(private val activity: Activity) {
 /**
  * 外屏电源的开关与记录。
  *
- * 本应用点亮的那块屏由本应用负责关电：先试系统的关电接口，不通就用 cmd display power-off，
- * 最后 power-reset。应用被强制停止时来不及下电，会把屏幕 id 记在本地，
- * 下次启动由 recoverAfterForceStop 补做。
+ * 画过封面的那块外屏由本应用负责关电：先试系统的关电接口，不通就用 cmd display power-off，
+ * 最后 power-reset。不问电是谁给的：展开态下这块屏只有被 enable 过才会有电。
+ * 应用被强制停止时来不及下电，会把屏幕 id 记在本地，下次启动由 recoverAfterForceStop 补做。
  */
 object CoverScreenPower {
 
     private const val PREFS_NAME = "cover_screen_power"
-    private const val KEY_POWERED_DISPLAY = "powered_display_id"
+    private const val KEY_COVER_DISPLAY = "cover_display_id"
     private const val NO_DISPLAY = -1
 
     /** 系统的关电接口名（都是 @SystemApi，按顺序试）。 */
@@ -679,17 +690,17 @@ object CoverScreenPower {
     }.getOrNull()
 
     /** 记下这块屏是我们点亮的：应用被强杀时才有东西可补。 */
-    fun markPoweredUp(context: Context, displayId: Int) {
-        prefs(context).edit().putInt(KEY_POWERED_DISPLAY, displayId).apply()
+    fun markCoverDisplayInUse(context: Context, displayId: Int) {
+        prefs(context).edit().putInt(KEY_COVER_DISPLAY, displayId).apply()
     }
 
-    fun clearPoweredUp(context: Context) {
-        prefs(context).edit().remove(KEY_POWERED_DISPLAY).apply()
+    fun clearCoverDisplayInUse(context: Context) {
+        prefs(context).edit().remove(KEY_COVER_DISPLAY).apply()
     }
 
     /** 给指定屏幕下电：系统接口 → cmd display power-off → cmd display power-reset。 */
     fun powerOff(context: Context, displayId: Int) {
-        clearPoweredUp(context)
+        clearCoverDisplayInUse(context)
         if (tryPowerOffApi(context, displayId)) {
             verifyPoweredOff(context, displayId)
             return
@@ -706,7 +717,7 @@ object CoverScreenPower {
                     Log.d(TAG, "已把外屏电源交回系统 id=$displayId（命令 cmd display power-reset）")
                     verifyPoweredOff(context, displayId)
                 } else {
-                    markPoweredUp(context, displayId)
+                    markCoverDisplayInUse(context, displayId)
                     Log.w(TAG, "外屏下电失败：$fallback，这块屏会亮到系统自己关；下次启动会再试一次")
                 }
             }
@@ -715,21 +726,21 @@ object CoverScreenPower {
 
     /** 上次进程被强杀时可能没来得及下电，下次启动补做；没有标记时什么都不做。 */
     fun recoverAfterForceStop(activity: Activity) {
-        val displayId = prefs(activity).getInt(KEY_POWERED_DISPLAY, NO_DISPLAY)
+        val displayId = prefs(activity).getInt(KEY_COVER_DISPLAY, NO_DISPLAY)
         if (displayId == NO_DISPLAY) return
         val display = displayOf(activity, displayId)
         if (display == null) {
-            clearPoweredUp(activity)
+            clearCoverDisplayInUse(activity)
             Log.d(TAG, "补做下电跳过：id=$displayId 的屏幕已经不在了")
             return
         }
         if (display.displayId == runCatching { activity.display?.displayId }.getOrNull()) {
-            clearPoweredUp(activity)
+            clearCoverDisplayInUse(activity)
             Log.d(TAG, "补做下电跳过：id=$displayId 现在是当前屏幕")
             return
         }
         if (!isLit(display)) {
-            clearPoweredUp(activity)
+            clearCoverDisplayInUse(activity)
             Log.d(TAG, "补做下电跳过：id=$displayId 已经没有电（state=${stateName(stateOf(display))}）")
             return
         }
@@ -768,8 +779,12 @@ object CoverScreenPower {
             val name = stateName(state)
             when {
                 state in LIT_STATES -> {
-                    markPoweredUp(context, displayId)
-                    Log.w(TAG, "下电后复查 id=$displayId state=$name：命令执行成功但屏幕还有电，下次启动会再试一次")
+                    markCoverDisplayInUse(context, displayId)
+                    Log.w(
+                        TAG,
+                        "下电后复查 id=$displayId state=$name：下电没生效，系统仍认为这块屏该亮；" +
+                            "它要到息屏或折叠才会灭，下次启动会再试一次"
+                    )
                 }
 
                 state < 0 -> Log.d(TAG, "下电后复查 id=$displayId state=$name")
