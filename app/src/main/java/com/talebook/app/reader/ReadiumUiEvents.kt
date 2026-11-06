@@ -149,6 +149,7 @@ data class ReaderDisplaySettings(
     val customFontName: String = "",
     val dayPresetId: String = "",
     val nightPresetId: String = "",
+    val coverScreenEnabled: Boolean = false,
 )
 
 enum class ReaderFontFamily {

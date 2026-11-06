@@ -1067,6 +1067,15 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 ChangelogSection(
+                    version = "3.4.3beta",
+                    items = listOf(
+                        "新增折叠屏外屏显示封面（Beta，测试功能）：展开用内屏看书时，把本书封面显示在外屏给旁边的人看。",
+                        "入口在阅读器高级设置，只在使用内屏时可以打开；每次进入阅读器默认关闭，不做持久化。",
+                        "优先使用官方 androidx.window 背屏区域能力；系统不提供该能力时直连内置外屏。",
+                        "已知限制：部分折叠屏（如小米）展开时系统不给外屏供电，需要开启手机调试，用 adb shell cmd display enable-display <id> 点亮外屏；封面只对外屏生效，本地与外部打开的书没有封面。"
+                    )
+                )
+                ChangelogSection(
                     version = "3.4.2",
                     items = listOf(
                         "支持从文件管理器等外部应用直接打开 EPUB / PDF / TXT 文件。",

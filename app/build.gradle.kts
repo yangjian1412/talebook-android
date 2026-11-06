@@ -12,8 +12,8 @@ android {
         applicationId = "com.talebook.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "3.4.2"
+        versionCode = 20
+        versionName = "3.4.3beta"
     }
 
     signingConfigs {
@@ -87,6 +87,7 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.window)
 
     // Readium Kotlin Toolkit — 本地阅读器内核
     implementation(libs.readium.shared)

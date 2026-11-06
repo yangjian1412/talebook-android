@@ -117,6 +117,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.talebook.app.reader.CoverScreenController
 import com.talebook.app.reader.ReaderBarsController
 import com.talebook.app.reader.ReadiumHostFragment
 import com.talebook.app.data.local.RecentReadingEntity
@@ -374,6 +375,24 @@ fun LocalReaderScreen(
     DisposableEffect(activity, readerSettings.volumeKeyPageTurn) {
         (activity as? MainActivity)?.volumeKeyPageTurnEnabled = readerSettings.volumeKeyPageTurn
         onDispose { (activity as? MainActivity)?.volumeKeyPageTurnEnabled = false }
+    }
+
+    // 折叠屏外屏封面：只有系统提供背屏区域（折叠屏展开）、且本书有封面时才会显示
+    val coverController = remember(activity) { activity?.let { CoverScreenController(it) } }
+    LaunchedEffect(coverController) {
+        coverController?.observeWindowAreas()
+    }
+    LaunchedEffect(coverController, readerSettings.coverScreenEnabled, uiState.coverPath, uiState.sessionId) {
+        val controller = coverController ?: return@LaunchedEffect
+        val shouldShow = readerSettings.coverScreenEnabled && uiState.sessionId != null
+        if (shouldShow) {
+            controller.showCover(uiState.coverPath, allowDirect = true)
+        } else {
+            controller.hideCover()
+        }
+    }
+    DisposableEffect(coverController) {
+        onDispose { coverController?.release() }
     }
 
     LaunchedEffect(activity, uiState.sessionId, readerSettings.scrollMode) {
@@ -1676,6 +1695,50 @@ if (showProgressJumpDialog) {
                             enabled = isLandscapeAdv,
                             onCheckedChange = {
                                 viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = readerSettings.brightness, scrollMode = false, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn, twoPageMode = it)
+                            }
+                        )
+                    }
+                    val isInnerScreenAdv = LocalConfiguration.current.smallestScreenWidthDp >= 600
+                    LaunchedEffect(isInnerScreenAdv) {
+                        if (!isInnerScreenAdv && readerSettings.coverScreenEnabled) {
+                            viewModel.updateCoverScreenEnabled(false)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "折叠屏外屏显示封面",
+                                    color = if (isInnerScreenAdv) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = "Beta",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                text = "测试功能，需开启手机调试，且可能不稳定",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        CompactSwitch(
+                            checked = readerSettings.coverScreenEnabled,
+                            enabled = isInnerScreenAdv,
+                            onCheckedChange = { enabled ->
+                                viewModel.updateCoverScreenEnabled(enabled)
                             }
                         )
                     }

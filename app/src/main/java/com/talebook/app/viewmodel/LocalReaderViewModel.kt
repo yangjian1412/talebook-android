@@ -12,6 +12,7 @@ import com.talebook.app.data.local.ReaderBookmarkEntity
 import com.talebook.app.data.local.ReaderDatabase
 import com.talebook.app.data.local.ReadingProgressEntity
 import com.talebook.app.data.local.RecentReadingEntity
+import com.talebook.app.data.model.coverPath
 import com.talebook.app.data.repository.BookRepository
 import com.talebook.app.data.repository.LocalLibraryRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
@@ -66,6 +67,7 @@ private const val LOCAL_RECENT_SERVER_ID = "local"
 data class LocalReaderUiState(
     val isLoading: Boolean = false,
     val title: String = "",
+    val coverPath: String = "",
     val cachedPath: String = "",
     val sourceUri: String = "",
     val format: String = "",
@@ -273,6 +275,7 @@ class LocalReaderViewModel : ViewModel() {
                                 twoPageMode = settingsRepository.readerTwoPageMode.first(),
                                 customFontPath = settingsRepository.readerCustomFontPath.first(),
                                 customFontName = settingsRepository.readerCustomFontName.first(),
+                                coverScreenEnabled = _uiState.value.readerSettings.coverScreenEnabled,
                             )
                             val ttsSettings = ReaderTtsState(
                                 speechRate = settingsRepository.ttsSpeechRate.first(),
@@ -303,6 +306,7 @@ class LocalReaderViewModel : ViewModel() {
                             _uiState.value = LocalReaderUiState(
                                 isLoading = false,
                                 title = book.title,
+                                coverPath = book.coverPath(),
                                 cachedPath = if (source.isCached) source.uri else "",
                                 sourceUri = source.uri,
                                 format = source.format,
@@ -578,6 +582,7 @@ pageMargins = settingsRepository.readerPageMargins.first(),
             twoPageMode = settingsRepository.readerTwoPageMode.first(),
             customFontPath = settingsRepository.readerCustomFontPath.first(),
             customFontName = settingsRepository.readerCustomFontName.first(),
+            coverScreenEnabled = _uiState.value.readerSettings.coverScreenEnabled,
         )
     }
 
@@ -1041,6 +1046,16 @@ private suspend fun openReadiumSession(
                 customFontName = settings.customFontName
             )
             repo.saveReaderCustomColors(settings.readerBackgroundColor, settings.readerTextColor, settings.customThemeEnabled)
+        }
+    }
+
+    /**
+     * 高级设置里的「外屏显示封面」开关。只改这一项，不触发其他阅读设置的重算。
+     * 这是测试用的开关，不写入设置存储：每次进入阅读器都是关着的。
+     */
+    fun updateCoverScreenEnabled(enabled: Boolean) {
+        _uiState.update { state ->
+            state.copy(readerSettings = state.readerSettings.copy(coverScreenEnabled = enabled))
         }
     }
 
