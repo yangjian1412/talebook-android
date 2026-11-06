@@ -377,8 +377,15 @@ fun LocalReaderScreen(
         onDispose { (activity as? MainActivity)?.volumeKeyPageTurnEnabled = false }
     }
 
-    // 折叠屏外屏封面：只有系统提供背屏区域（折叠屏展开）、且本书有封面时才会显示
+    // 折叠屏：sw >= 600dp 表示正在使用内屏（展开状态），合上后会低于这个值。
+    val onInnerScreen = LocalConfiguration.current.smallestScreenWidthDp >= 600
     val coverController = remember(activity) { activity?.let { CoverScreenController(it) } }
+    LaunchedEffect(onInnerScreen, readerSettings.coverScreenEnabled) {
+        // 阅读过程中发生折叠：关掉这个测试开关；改其他设置不会触发这里。
+        if (!onInnerScreen && readerSettings.coverScreenEnabled) {
+            viewModel.updateCoverScreenEnabled(false)
+        }
+    }
     LaunchedEffect(coverController) {
         coverController?.observeWindowAreas()
     }
@@ -391,8 +398,16 @@ fun LocalReaderScreen(
             controller.hideCover()
         }
     }
-    DisposableEffect(coverController) {
-        onDispose { coverController?.release() }
+    DisposableEffect(coverController, viewModel) {
+        val controller = coverController
+        if (controller != null) {
+            // 发生折叠（外屏不再可用）时把界面上的开关关掉；其他设置变化不联动。
+            controller.onOuterScreenLost = { viewModel.updateCoverScreenEnabled(false) }
+        }
+        onDispose {
+            controller?.onOuterScreenLost = null
+            controller?.release()
+        }
     }
 
     LaunchedEffect(activity, uiState.sessionId, readerSettings.scrollMode) {
@@ -1698,7 +1713,6 @@ if (showProgressJumpDialog) {
                             }
                         )
                     }
-                    val isInnerScreenAdv = LocalConfiguration.current.smallestScreenWidthDp >= 600
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1714,7 +1728,7 @@ if (showProgressJumpDialog) {
                             ) {
                                 Text(
                                     text = "折叠屏外屏显示封面",
-                                    color = if (isInnerScreenAdv) MaterialTheme.colorScheme.onSurface
+                                    color = if (onInnerScreen) MaterialTheme.colorScheme.onSurface
                                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                 )
                                 Text(
@@ -1731,7 +1745,7 @@ if (showProgressJumpDialog) {
                         }
                         CompactSwitch(
                             checked = readerSettings.coverScreenEnabled,
-                            enabled = isInnerScreenAdv,
+                            enabled = onInnerScreen,
                             onCheckedChange = { enabled ->
                                 viewModel.updateCoverScreenEnabled(enabled)
                             }

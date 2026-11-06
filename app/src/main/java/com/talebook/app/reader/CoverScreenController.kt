@@ -69,6 +69,13 @@ class CoverScreenController(private val activity: Activity) {
     private var lastLoadedUrl: String? = null
     private var loadedForView: ImageView? = null
     private var triedPowerOn = false
+    private var outerScreenAvailable = false
+
+    /**
+     * 外屏因为折叠而不再可用时通知调用方（界面用它把开关关掉）。
+     * 只在「本来有、后来没有」这种变化时触发，不是每次判断失败都触发。
+     */
+    var onOuterScreenLost: (() -> Unit)? = null
 
     /**
      * 持续跟踪系统提供的窗口区域。只有折叠屏展开、外屏可用时才有背屏区域，
@@ -115,6 +122,8 @@ class CoverScreenController(private val activity: Activity) {
         wantedCoverPath = null
         allowDirectDisplay = false
         rearArea = null
+        outerScreenAvailable = false
+        onOuterScreenLost = null
         loggedInventory = false
         loggedWindowAreas = false
         lastLoadedUrl = null
@@ -202,6 +211,11 @@ class CoverScreenController(private val activity: Activity) {
         if (display == null) {
             // 合上手机时外屏会变成当前屏幕，这时必须收起封面窗口，否则会盖在阅读界面上。
             dismissPresentation()
+            if (outerScreenAvailable) {
+                outerScreenAvailable = false
+                Log.d(TAG, "外屏已不可用（发生折叠），通知界面关闭开关")
+                onOuterScreenLost?.invoke()
+            }
             if (!loggedWaitHint) {
                 loggedWaitHint = true
                 Log.w(TAG, "没有可用作外屏的显示屏（见上面的屏幕清单）")
@@ -209,6 +223,7 @@ class CoverScreenController(private val activity: Activity) {
             waitForSecondaryDisplay()
             return
         }
+        outerScreenAvailable = true
         noteTargetPowerState(display)
         val existing = presentation
         if (existing != null) {
