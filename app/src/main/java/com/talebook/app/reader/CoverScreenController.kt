@@ -9,6 +9,8 @@ import android.graphics.Color
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Display
@@ -33,6 +35,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private const val TAG = "TaleCoverScreen"
+
 /**
  * 折叠屏外屏封面。
  *
@@ -49,6 +53,8 @@ import kotlinx.coroutines.launch
  * 自己点亮的那块屏由自己负责关电：关闭开关、退出阅读器、退出应用时会给它下电
  * （先试 cmd display power-off，再试 power-reset）；系统或别的途径点亮的一律不动，
  * 发生折叠后那块屏会变成当前屏幕，这时也不下电。
+ * 另外监听屏幕状态变化：外屏被系统关掉电（熄屏、省电）之后，封面会自动重新点亮，
+ * 不需要重新打开开关；应用被强制停止而来不及下电时，下次启动会补做（见 CoverScreenPower）。
  * 另有备用触发方式：把全局设置 talebook_cover_debug 置为 1（供 adb 调试用）。
  */
 class CoverScreenController(private val activity: Activity) {
@@ -86,6 +92,22 @@ class CoverScreenController(private val activity: Activity) {
      */
     var onOuterScreenLost: (() -> Unit)? = null
 
+    private var displayChangesObserved = false
+
+    /** 屏幕电源状态变化（系统熄屏、省电关电、我们点屏/下电）都会触发这里。 */
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+
+        override fun onDisplayRemoved(displayId: Int) = Unit
+
+        override fun onDisplayChanged(displayId: Int) {
+            if (wantedCoverPath == null) return
+            if (displayId == currentDisplayId()) return
+            Log.d(TAG, "屏幕 id=$displayId 状态变化，重新确认外屏封面")
+            syncSession()
+        }
+    }
+
     /**
      * 持续跟踪系统提供的窗口区域。只有折叠屏展开、外屏可用时才有背屏区域，
      * 因此这个监听本身就实现了「只对折叠屏展开生效」。
@@ -103,6 +125,18 @@ class CoverScreenController(private val activity: Activity) {
             }
             syncSession()
         }
+    }
+
+    /**
+     * 监听屏幕状态变化：外屏被系统熄掉或关电之后重新确认封面，
+     * 需要时会顺手把外屏点亮，不会出现「窗口还在但屏没电」。
+     */
+    fun observeDisplayChanges() {
+        if (displayChangesObserved) return
+        val displayManager = activity.getSystemService(DisplayManager::class.java) ?: return
+        runCatching { displayManager.registerDisplayListener(displayListener, Handler(Looper.getMainLooper())) }
+            .onSuccess { displayChangesObserved = true }
+            .onFailure { error -> Log.w(TAG, "监听屏幕状态变化失败：$error") }
     }
 
     private fun capabilityStatusOf(area: WindowAreaInfo): Any? = runCatching {
@@ -136,7 +170,16 @@ class CoverScreenController(private val activity: Activity) {
         loggedInventory = false
         loggedWindowAreas = false
         lastLoadedUrl = null
+        stopObservingDisplayChanges()
         stopShowing()
+    }
+
+    private fun stopObservingDisplayChanges() {
+        if (!displayChangesObserved) return
+        displayChangesObserved = false
+        val displayManager = activity.getSystemService(DisplayManager::class.java) ?: return
+        runCatching { displayManager.unregisterDisplayListener(displayListener) }
+            .onFailure { error -> Log.w(TAG, "取消监听屏幕变化失败：$error") }
     }
 
     private fun WindowAreaInfo.canPresentCover(): Boolean {
@@ -273,20 +316,12 @@ class CoverScreenController(private val activity: Activity) {
             .mapNotNull { id -> displayManager.getDisplay(id) }
             .filter { display -> display.displayId != currentId }
             .filter { display -> currentArea == 0L || display.area() in 1 until currentArea }
-            .sortedByDescending { display -> if (isPoweredOn(display)) 1 else 0 }
+            .sortedByDescending { display -> if (CoverScreenPower.isLit(display)) 1 else 0 }
         return candidates.firstOrNull { display -> display.flags and Display.FLAG_PRESENTATION != 0 }
             ?: candidates.firstOrNull()
     }
 
     private fun currentDisplayId(): Int? = runCatching { activity.display?.displayId }.getOrNull()
-
-    private fun isPoweredOn(display: Display): Boolean = stateOf(display) == Display.STATE_ON
-
-    /** Display.getState() 是 API 35；更早的系统返回 -1，只用于日志。 */
-    private fun stateOf(display: Display): Int {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return -1
-        return runCatching { display.state }.getOrDefault(-1)
-    }
 
     @Suppress("DEPRECATION")
     private fun Display.area(): Long = runCatching {
@@ -300,7 +335,7 @@ class CoverScreenController(private val activity: Activity) {
 
     /** 外屏电源状态变化时只记一次，方便只靠日志判断卡在哪一步。 */
     private fun noteTargetPowerState(display: Display) {
-        val state = stateOf(display)
+        val state = CoverScreenPower.stateOf(display)
         if (state == lastTargetState) return
         lastTargetState = state
         if (state == Display.STATE_ON) {
@@ -336,7 +371,7 @@ class CoverScreenController(private val activity: Activity) {
                 for (display in visible) {
                     append("  id=").append(display.displayId)
                     append(" 尺寸=").append(display.width).append('x').append(display.height)
-                    append(" state=").append(stateOf(display))
+                    append(" state=").append(CoverScreenPower.stateOf(display))
                     append(" flags=").append(Integer.toHexString(display.flags))
                     append(" 标记为副屏=").append(display.flags and Display.FLAG_PRESENTATION != 0)
                     appendLine()
@@ -358,15 +393,17 @@ class CoverScreenController(private val activity: Activity) {
     }
 
     private fun tryEnableDisplayApi(target: Display): Boolean {
-        var apiName = ""
+        val displayManager = activity.getSystemService(DisplayManager::class.java) ?: return false
+        val method = displayManager.javaClass.methods.firstOrNull { candidate ->
+            candidate.name == "enableDisplay" &&
+                candidate.parameterTypes.isNotEmpty() &&
+                candidate.parameterTypes[0] == Int::class.javaPrimitiveType
+        }
+        if (method == null) {
+            Log.w(TAG, "系统没有向应用开放点亮屏幕的接口（没找到 enableDisplay）")
+            return false
+        }
         val outcome = runCatching {
-            val displayManager = activity.getSystemService(DisplayManager::class.java) ?: return false
-            val method = displayManager.javaClass.methods.firstOrNull { candidate ->
-                candidate.name == "enableDisplay" &&
-                    candidate.parameterTypes.isNotEmpty() &&
-                    candidate.parameterTypes[0] == Int::class.javaPrimitiveType
-            } ?: return false
-            apiName = method.name
             // 不同系统的 enableDisplay 参数个数不同，按签名补默认值。
             val args = arrayOfNulls<Any>(method.parameterTypes.size)
             for (index in method.parameterTypes.indices) {
@@ -379,16 +416,16 @@ class CoverScreenController(private val activity: Activity) {
             method.invoke(displayManager, *args) == true
         }
         if (outcome.getOrDefault(false)) {
-            markDisplayPoweredOn(target.displayId, "系统接口 $apiName")
+            markDisplayPoweredOn(target.displayId, "系统接口 ${method.name}")
             return true
         }
-        Log.w(TAG, "系统没有向应用开放点亮屏幕的接口：${outcome.exceptionOrNull()}")
+        Log.w(TAG, "系统的点亮屏幕接口调用失败：${outcome.exceptionOrNull()}")
         return false
     }
 
     /** 兜底：自己执行一次 cmd display enable-display，成功就不需要外部命令了。 */
     private fun tryEnableDisplayCommand(target: Display) {
-        runDisplayCommand("enable-display", target.displayId) { failure ->
+        CoverScreenPower.runDisplayCommand("enable-display", target.displayId) { failure ->
             if (failure == null) {
                 markDisplayPoweredOn(target.displayId, "命令 cmd display enable-display")
                 // 点亮成功后立刻再走一次，不用等下一轮轮询。
@@ -402,30 +439,8 @@ class CoverScreenController(private val activity: Activity) {
     /** 点亮成功：记下这块屏归我们管（只有我们能下电），日志里写明走的是哪条路，便于换机型对比。 */
     private fun markDisplayPoweredOn(displayId: Int, path: String) {
         poweredOnDisplayId = displayId
+        CoverScreenPower.markPoweredUp(activity, displayId)
         Log.d(TAG, "已点亮外屏 id=$displayId（$path）")
-    }
-
-    /** 在后台执行一次 cmd display <子命令> <id>；回调给出失败原因，null 表示成功。 */
-    private fun runDisplayCommand(subcommand: String, displayId: Int, onResult: (String?) -> Unit) {
-        scope.launch(Dispatchers.IO) {
-            val failure = runCatching {
-                val process = Runtime.getRuntime().exec(
-                    arrayOf("cmd", "display", subcommand, displayId.toString())
-                )
-                if (!process.waitFor(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    process.destroyForcibly()
-                    "命令超时"
-                } else {
-                    val error = process.errorStream.bufferedReader().use { reader -> reader.readText() }.trim()
-                    when {
-                        process.exitValue() != 0 -> "退出码 ${process.exitValue()}"
-                        error.isNotEmpty() -> error.lineSequence().firstOrNull()?.trim().orEmpty()
-                        else -> null
-                    }
-                }
-            }.getOrElse { error -> error.message ?: error.toString() }
-            scope.launch { onResult(failure) }
-        }
     }
 
     /**
@@ -437,69 +452,21 @@ class CoverScreenController(private val activity: Activity) {
         poweredOnDisplayId = null
         if (displayId == currentDisplayId()) {
             Log.d(TAG, "不下电：id=$displayId 现在是当前屏幕（发生折叠）")
+            CoverScreenPower.clearPoweredUp(activity)
             return
         }
-        val displayManager = activity.getSystemService(DisplayManager::class.java) ?: return
-        val display = runCatching { displayManager.getDisplay(displayId) }.getOrNull()
+        val display = CoverScreenPower.displayOf(activity, displayId)
         if (display == null) {
             Log.d(TAG, "不下电：id=$displayId 的屏幕已经不在了")
+            CoverScreenPower.clearPoweredUp(activity)
             return
         }
-        if (!isPoweredOn(display)) {
-            Log.d(TAG, "不下电：外屏 id=$displayId 已经没有电（state=${stateOf(display)}）")
+        if (CoverScreenPower.isOff(display)) {
+            Log.d(TAG, "不下电：外屏 id=$displayId 已经没有电（state=${CoverScreenPower.stateOf(display)}）")
+            CoverScreenPower.clearPoweredUp(activity)
             return
         }
-        if (tryPowerOffDisplayApi(displayManager, displayId)) return
-        runDisplayCommand("power-off", displayId) { failure ->
-            if (failure == null) {
-                Log.d(TAG, "已给外屏下电 id=$displayId（命令 cmd display power-off）")
-                return@runDisplayCommand
-            }
-            Log.w(TAG, "命令下电失败：$failure，改试 power-reset")
-            runDisplayCommand("power-reset", displayId) { fallback ->
-                if (fallback == null) {
-                    Log.d(TAG, "已把外屏电源交回系统 id=$displayId（命令 cmd display power-reset）")
-                } else {
-                    Log.w(TAG, "外屏下电失败：$fallback，这块屏会一直亮到系统自己关")
-                }
-            }
-        }
-    }
-
-    /** 系统的关电接口（@SystemApi，一般不开放给三方应用），不通就返回 false 改走命令。 */
-    private fun tryPowerOffDisplayApi(displayManager: DisplayManager, displayId: Int): Boolean {
-        val method = displayManager.javaClass.methods.firstOrNull { candidate ->
-            candidate.name in POWER_OFF_API_NAMES &&
-                candidate.parameterTypes.size >= 2 &&
-                candidate.parameterTypes[0] == Int::class.javaPrimitiveType &&
-                candidate.parameterTypes[1] == Int::class.javaPrimitiveType
-        }
-        if (method == null) {
-            Log.d(TAG, "系统没有向应用开放关电接口（没找到 ${POWER_OFF_API_NAMES.joinToString()}）")
-            return false
-        }
-        val outcome = runCatching {
-            val args = arrayOfNulls<Any>(method.parameterTypes.size)
-            args[0] = displayId
-            // Display.POWER_MODE_OFF = 0，这个常量不公开，按值传。
-            args[1] = POWER_MODE_OFF
-            for (index in 2 until method.parameterTypes.size) {
-                args[index] = when (method.parameterTypes[index]) {
-                    Boolean::class.javaPrimitiveType -> false
-                    Long::class.javaPrimitiveType -> 0L
-                    String::class.java -> "talebook_cover"
-                    else -> null
-                }
-            }
-            // 这些接口有的是 void（返回 null），有的返回 boolean；只有明确返回 false 才算失败。
-            method.invoke(displayManager, *args) != false
-        }
-        if (outcome.getOrDefault(false)) {
-            Log.d(TAG, "已给外屏下电 id=$displayId（系统接口 ${method.name}）")
-            return true
-        }
-        Log.w(TAG, "系统关电接口失败：${outcome.exceptionOrNull()}")
-        return false
+        CoverScreenPower.powerOff(activity, displayId)
     }
 
     /** 等待副屏被点亮：轮询一小段时间，期间 adb 点亮后就能立刻显示。 */
@@ -614,24 +581,212 @@ class CoverScreenController(private val activity: Activity) {
     }.getOrDefault(false)
 
     private companion object {
-        const val TAG = "TaleCoverScreen"
-
         /** adb shell settings put global talebook_cover_debug 1 —— 允许在没有背屏区域时直连副屏显示。 */
         const val DIRECT_DISPLAY_DEBUG_KEY = "talebook_cover_debug"
         const val DIRECT_DISPLAY_DISABLED = 0
 
         // 内置副屏的 displayId 在展开/合上时会变，只能按小范围逐个取。
         val SECONDARY_DISPLAY_ID_RANGE = 0..7
-        const val WAIT_RETRY_TIMES = 40
+
+        /**
+         * 等外屏供电的轮询次数。屏幕电源状态变化主要由 DisplayListener 收到，
+         * 这里只是兜底（有些系统只发 add/remove，不发 change）。
+         */
+        const val WAIT_RETRY_TIMES = 10
         const val WAIT_RETRY_INTERVAL_MS = 3_000L
-
-        /** 自己执行点屏命令的等待上限。 */
-        const val COMMAND_TIMEOUT_MS = 3_000L
-
-        /** 系统的关电接口名（都是 @SystemApi，按顺序试）。 */
-        val POWER_OFF_API_NAMES = setOf("setDisplayPowerMode", "powerDisplay")
-
-        /** Display.POWER_MODE_OFF，这个常量不公开，按值传。 */
-        const val POWER_MODE_OFF = 0
     }
+}
+
+/**
+ * 外屏电源的开关与记录。
+ *
+ * 本应用点亮的那块屏由本应用负责关电：先试系统的关电接口，不通就用 cmd display power-off，
+ * 最后 power-reset。应用被强制停止时来不及下电，会把屏幕 id 记在本地，
+ * 下次启动由 recoverAfterForceStop 补做。
+ */
+object CoverScreenPower {
+
+    private const val PREFS_NAME = "cover_screen_power"
+    private const val KEY_POWERED_DISPLAY = "powered_display_id"
+    private const val NO_DISPLAY = -1
+
+    /** 系统的关电接口名（都是 @SystemApi，按顺序试）。 */
+    private val POWER_OFF_API_NAMES = setOf("setDisplayPowerMode", "powerDisplay")
+
+    /** Display.POWER_MODE_OFF，这个常量不公开，按值传。 */
+    private const val POWER_MODE_OFF = 0
+
+    /** 自己执行命令的等待上限。 */
+    private const val COMMAND_TIMEOUT_MS = 3_000L
+
+    /** 下电之后复查电源状态的等待时间。 */
+    private const val VERIFY_DELAY_MS = 1_500L
+
+    /** Display.STATE_DIM，这个常量不公开，按值传。 */
+    private const val STATE_DIM = 1
+
+    /** Display.STATE_* 里算「带电」的取值。 */
+    private val LIT_STATES = setOf(
+        Display.STATE_ON,
+        STATE_DIM,
+        Display.STATE_DOZE,
+        Display.STATE_DOZE_SUSPEND,
+        Display.STATE_ON_SUSPEND
+    )
+
+    private val scope = CoroutineScope(Dispatchers.Main.immediate)
+
+    /** Display.getState() 是 API 35；更早的系统返回 -1（读不到）。 */
+    fun stateOf(display: Display): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return -1
+        return runCatching { display.state }.getOrDefault(-1)
+    }
+
+    fun stateOf(context: Context, displayId: Int): Int = displayOf(context, displayId)?.let { stateOf(it) } ?: -1
+
+    fun isLit(display: Display): Boolean = stateOf(display) in LIT_STATES
+
+    /** 明确知道没电（读不到状态不算，那种情况该做什么还是做什么）。 */
+    fun isOff(display: Display): Boolean = stateOf(display) == Display.STATE_OFF
+
+    fun displayOf(context: Context, displayId: Int): Display? = runCatching {
+        context.getSystemService(DisplayManager::class.java)?.getDisplay(displayId)
+    }.getOrNull()
+
+    /** 记下这块屏是我们点亮的：应用被强杀时才有东西可补。 */
+    fun markPoweredUp(context: Context, displayId: Int) {
+        prefs(context).edit().putInt(KEY_POWERED_DISPLAY, displayId).apply()
+    }
+
+    fun clearPoweredUp(context: Context) {
+        prefs(context).edit().remove(KEY_POWERED_DISPLAY).apply()
+    }
+
+    /** 给指定屏幕下电：系统接口 → cmd display power-off → cmd display power-reset。 */
+    fun powerOff(context: Context, displayId: Int) {
+        clearPoweredUp(context)
+        if (tryPowerOffApi(context, displayId)) {
+            verifyPoweredOff(context, displayId)
+            return
+        }
+        runDisplayCommand("power-off", displayId) { failure ->
+            if (failure == null) {
+                Log.d(TAG, "已给外屏下电 id=$displayId（命令 cmd display power-off）")
+                verifyPoweredOff(context, displayId)
+                return@runDisplayCommand
+            }
+            Log.w(TAG, "命令下电失败：$failure，改试 power-reset")
+            runDisplayCommand("power-reset", displayId) { fallback ->
+                if (fallback == null) {
+                    Log.d(TAG, "已把外屏电源交回系统 id=$displayId（命令 cmd display power-reset）")
+                    verifyPoweredOff(context, displayId)
+                } else {
+                    markPoweredUp(context, displayId)
+                    Log.w(TAG, "外屏下电失败：$fallback，这块屏会亮到系统自己关；下次启动会再试一次")
+                }
+            }
+        }
+    }
+
+    /** 上次进程被强杀时可能没来得及下电，下次启动补做；没有标记时什么都不做。 */
+    fun recoverAfterForceStop(activity: Activity) {
+        val displayId = prefs(activity).getInt(KEY_POWERED_DISPLAY, NO_DISPLAY)
+        if (displayId == NO_DISPLAY) return
+        val display = displayOf(activity, displayId)
+        if (display == null) {
+            clearPoweredUp(activity)
+            Log.d(TAG, "补做下电跳过：id=$displayId 的屏幕已经不在了")
+            return
+        }
+        if (display.displayId == runCatching { activity.display?.displayId }.getOrNull()) {
+            clearPoweredUp(activity)
+            Log.d(TAG, "补做下电跳过：id=$displayId 现在是当前屏幕")
+            return
+        }
+        if (!isLit(display)) {
+            clearPoweredUp(activity)
+            Log.d(TAG, "补做下电跳过：id=$displayId 已经没有电（state=${stateOf(display)}）")
+            return
+        }
+        Log.d(TAG, "补做上次留下的外屏下电 id=$displayId")
+        powerOff(activity, display.displayId)
+    }
+
+    /** 在后台执行一次 cmd display <子命令> <id>；回调给出失败原因，null 表示成功。 */
+    fun runDisplayCommand(subcommand: String, displayId: Int, onResult: (String?) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            val failure = runCatching {
+                val process = Runtime.getRuntime().exec(
+                    arrayOf("cmd", "display", subcommand, displayId.toString())
+                )
+                if (!process.waitFor(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    process.destroyForcibly()
+                    "命令超时"
+                } else {
+                    val error = process.errorStream.bufferedReader().use { reader -> reader.readText() }.trim()
+                    when {
+                        process.exitValue() != 0 -> "退出码 ${process.exitValue()}"
+                        error.isNotEmpty() -> error.lineSequence().firstOrNull()?.trim().orEmpty()
+                        else -> null
+                    }
+                }
+            }.getOrElse { error -> error.message ?: error.toString() }
+            scope.launch { onResult(failure) }
+        }
+    }
+
+    /** 下电之后回头看一眼，电源状态直接写进日志，不必只靠外部 dumpsys 判断。 */
+    private fun verifyPoweredOff(context: Context, displayId: Int) {
+        scope.launch {
+            delay(VERIFY_DELAY_MS)
+            val state = stateOf(context, displayId)
+            when {
+                state in LIT_STATES -> {
+                    markPoweredUp(context, displayId)
+                    Log.w(TAG, "下电后复查 id=$displayId state=$state：命令执行成功但屏幕还有电，下次启动会再试一次")
+                }
+
+                state < 0 -> Log.d(TAG, "下电后复查 id=$displayId：系统不给读电源状态")
+                else -> Log.d(TAG, "下电后复查 id=$displayId state=$state：已经不带电")
+            }
+        }
+    }
+
+    /** 系统的关电接口（@SystemApi，一般不开放给三方应用），不通返回 false。 */
+    private fun tryPowerOffApi(context: Context, displayId: Int): Boolean {
+        val displayManager = context.getSystemService(DisplayManager::class.java) ?: return false
+        val method = displayManager.javaClass.methods.firstOrNull { candidate ->
+            candidate.name in POWER_OFF_API_NAMES &&
+                candidate.parameterTypes.size >= 2 &&
+                candidate.parameterTypes[0] == Int::class.javaPrimitiveType &&
+                candidate.parameterTypes[1] == Int::class.javaPrimitiveType
+        }
+        if (method == null) {
+            Log.d(TAG, "系统没有向应用开放关电接口（没找到 ${POWER_OFF_API_NAMES.joinToString()}）")
+            return false
+        }
+        val outcome = runCatching {
+            val args = arrayOfNulls<Any>(method.parameterTypes.size)
+            args[0] = displayId
+            args[1] = POWER_MODE_OFF
+            for (index in 2 until method.parameterTypes.size) {
+                args[index] = when (method.parameterTypes[index]) {
+                    Boolean::class.javaPrimitiveType -> false
+                    Long::class.javaPrimitiveType -> 0L
+                    String::class.java -> "talebook_cover"
+                    else -> null
+                }
+            }
+            // 这些接口有的是 void（返回 null），有的返回 boolean；只有明确返回 false 才算失败。
+            method.invoke(displayManager, *args) != false
+        }
+        if (outcome.getOrDefault(false)) {
+            Log.d(TAG, "已给外屏下电 id=$displayId（系统接口 ${method.name}）")
+            return true
+        }
+        Log.w(TAG, "系统关电接口调用失败：${outcome.exceptionOrNull()}")
+        return false
+    }
+
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }

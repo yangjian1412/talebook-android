@@ -24,6 +24,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.fragment.app.FragmentActivity
 import com.talebook.app.data.repository.LocalLibraryRepository
 import com.talebook.app.data.repository.SettingsRepository
+import com.talebook.app.reader.CoverScreenPower
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.ui.navigation.NavGraph
 import com.talebook.app.ui.theme.TaleReaderTheme
@@ -58,6 +59,8 @@ class MainActivity : FragmentActivity() {
             }
         }
         handleViewIntent(intent)
+        // 上次应用被强杀时可能来不及给外屏下电，这里补做（没有标记时什么都不做）。
+        CoverScreenPower.recoverAfterForceStop(this)
 
         enableEdgeToEdge()
         applyGlobalSystemBars()

@@ -389,6 +389,8 @@ fun LocalReaderScreen(
         }
     }
     LaunchedEffect(coverController) {
+        // 屏幕电源状态变化（熄屏、系统给外屏关电）时让控制器重新确认封面。
+        coverController?.observeDisplayChanges()
         coverController?.observeWindowAreas()
     }
     LaunchedEffect(coverController, readerSettings.coverScreenEnabled, uiState.coverPath, uiState.sessionId) {
