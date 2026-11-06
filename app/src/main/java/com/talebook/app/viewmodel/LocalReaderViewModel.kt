@@ -1005,6 +1005,8 @@ private suspend fun openReadiumSession(
             customFontName = customFontName,
             dayPresetId = dayPresetId,
             nightPresetId = nightPresetId,
+            // 「外屏显示封面」不是排版设置，改其他显示项时不能把它一起重置掉。
+            coverScreenEnabled = _uiState.value.readerSettings.coverScreenEnabled,
         )
         val previous = _uiState.value.readerSettings
         _uiState.update { it.copy(readerSettings = settings) }
