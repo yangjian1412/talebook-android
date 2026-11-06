@@ -630,9 +630,11 @@ class CoverScreenController(private val activity: Activity) {
 /**
  * 外屏电源的开关与记录。
  *
- * 画过封面的那块外屏由本应用负责关电：先试系统的关电接口，不通就用 cmd display power-off，
- * 最后 power-reset。不问电是谁给的：展开态下这块屏只有被 enable 过才会有电。
- * 应用被强制停止时来不及下电，会把屏幕 id 记在本地，下次启动由 recoverAfterForceStop 补做。
+ * 画过封面的那块外屏由本应用负责关电：先试系统的关电接口，再用 cmd display power-off，
+ * 接着 cmd display disable-display。不问电是谁给的：展开态下这块屏只有被 enable 过才会有电。
+ * 命令是一条接一条发的（从最近任务划掉应用时进程只留一秒左右），发完再统一复查一次。
+ * 应用被强杀而来不及下电时，会把屏幕 id 记在本地，下次启动由 recoverAfterForceStop 补做；
+ * 这个记录只在确认屏幕真的不带电之后才清掉。
  */
 object CoverScreenPower {
 
@@ -715,8 +717,9 @@ object CoverScreenPower {
     /**
      * 让那块屏不带电：系统接口 → cmd display power-off → cmd display disable-display。
      *
-     * 每一步之后都复查一次电源状态。实测这台机器上 power-off 常常只是临时熄灭，
-     * 系统会因为这块屏仍处于「已启用」状态立刻把它点亮，只有 disable-display 压得住。
+     * 命令一条接一条发，中间不等待：实测这台机器上 power-off 只是临时熄灭（这块屏仍处于
+     * 「已启用」状态，系统会立刻把它点亮），只有 disable-display 压得住；而从最近任务里
+     * 划掉应用时进程只留一秒左右，等不到复查。全部发完之后再复查一次电源状态。
      */
     fun powerOff(context: Context, displayId: Int) {
         if (powerOffInFlight) {
@@ -724,33 +727,39 @@ object CoverScreenPower {
             return
         }
         powerOffInFlight = true
-        clearCoverDisplayInUse(context)
         scope.launch {
             try {
-                if (tryPowerOffApi(context, displayId) && confirmPoweredOff(context, displayId, "系统接口")) return@launch
-                val powerOffFailure = runCommand("power-off", displayId)
-                if (powerOffFailure == null) {
-                    Log.d(TAG, "已给外屏下电 id=$displayId（命令 cmd display power-off）")
-                    if (confirmPoweredOff(context, displayId, "命令 cmd display power-off")) return@launch
+                val tried = mutableListOf<String>()
+                if (tryPowerOffApi(context, displayId)) {
+                    tried += "系统接口"
+                }
+                if (runCommand("power-off", displayId) == null) {
+                    tried += "命令 cmd display power-off"
                 } else {
-                    Log.w(TAG, "命令下电失败：$powerOffFailure，改试 disable-display")
+                    Log.w(TAG, "命令 cmd display power-off 没成功，继续试 disable-display")
                 }
                 val disableFailure = runCommand("disable-display", displayId)
-                when {
-                    disableFailure != null -> {
-                        markCoverDisplayInUse(context, displayId)
-                        Log.w(TAG, "禁用外屏电源也失败：$disableFailure，这块屏会亮到系统自己关；下次启动会再试一次")
-                    }
-
-                    confirmPoweredOff(context, displayId, "命令 cmd display disable-display") -> {
+                when (disableFailure) {
+                    null -> {
+                        tried += "命令 cmd display disable-display"
+                        // 被禁用的屏幕要用之前得先启用回来。
                         markDisabled(context, displayId)
-                        Log.d(TAG, "已禁用外屏电源 id=$displayId（命令 cmd display disable-display），要用时会重新启用")
                     }
 
-                    else -> {
-                        markCoverDisplayInUse(context, displayId)
-                        Log.w(TAG, "禁用外屏后仍然亮：系统坚持要给这块屏供电，只能等息屏或折叠")
-                    }
+                    else -> Log.w(TAG, "命令 cmd display disable-display 没成功：$disableFailure")
+                }
+                if (tried.isEmpty()) {
+                    markCoverDisplayInUse(context, displayId)
+                    Log.w(TAG, "这台设备没有可用的下电办法，这块屏会亮到系统自己关；下次启动会再试一次")
+                    return@launch
+                }
+                val via = tried.joinToString(" + ")
+                if (confirmPoweredOff(context, displayId, via)) {
+                    // 到这一步才不需要补偿：中途被强杀时记录还在，下次启动会补做。
+                    clearCoverDisplayInUse(context)
+                } else {
+                    markCoverDisplayInUse(context, displayId)
+                    Log.w(TAG, "下电命令都发出去了，外屏还是亮着：只能等息屏或折叠，下次启动会再试一次")
                 }
             } finally {
                 powerOffInFlight = false
@@ -761,13 +770,13 @@ object CoverScreenPower {
     /** 一次下电流程同时在跑的时候不再重复触发。 */
     private var powerOffInFlight = false
 
-    /** 等一会儿再读电源状态，确认真的没电；返回 true 表示已经不带电。 */
+    /** 等一会儿再读电源状态，确认真的没电；结果写进日志，返回 true 表示已经不带电。 */
     private suspend fun confirmPoweredOff(context: Context, displayId: Int, via: String): Boolean {
         delay(VERIFY_DELAY_MS)
         val state = stateOf(context, displayId)
         val name = stateName(state)
         return if (state in LIT_STATES) {
-            Log.d(TAG, "下电后复查 id=$displayId state=$name：$via 没让屏幕熄灭")
+            Log.d(TAG, "下电后复查 id=$displayId state=$name：$via 没能熄灭这块屏")
             false
         } else {
             Log.d(TAG, "下电后复查 id=$displayId state=$name：已经不带电（$via）")
