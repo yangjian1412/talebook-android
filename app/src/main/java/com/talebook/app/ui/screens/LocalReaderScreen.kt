@@ -38,6 +38,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
@@ -779,6 +781,17 @@ fun LocalReaderScreen(
                             }
                         },
                         actions = {
+                            if (onInnerScreen) {
+                                // 外屏封面开关：只在使用内屏时出现，实心封面图标表示已开启。
+                                IconButton(onClick = {
+                                    viewModel.updateCoverScreenEnabled(!readerSettings.coverScreenEnabled)
+                                }) {
+                                    Icon(
+                                        imageVector = if (readerSettings.coverScreenEnabled) Icons.Filled.Book else Icons.Outlined.Book,
+                                        contentDescription = if (readerSettings.coverScreenEnabled) "关闭外屏显示封面" else "外屏显示封面"
+                                    )
+                                }
+                            }
                             IconButton(onClick = { showBookmarksDialog = true }) {
                                 Icon(Icons.Default.BookmarkAdd, contentDescription = "书签")
                             }
@@ -818,6 +831,17 @@ fun LocalReaderScreen(
                                 }
                             },
                             actions = {
+                                if (onInnerScreen) {
+                                    // 外屏封面开关：只在使用内屏时出现，实心封面图标表示已开启。
+                                    IconButton(onClick = {
+                                        viewModel.updateCoverScreenEnabled(!readerSettings.coverScreenEnabled)
+                                    }) {
+                                        Icon(
+                                            imageVector = if (readerSettings.coverScreenEnabled) Icons.Filled.Book else Icons.Outlined.Book,
+                                            contentDescription = if (readerSettings.coverScreenEnabled) "关闭外屏显示封面" else "外屏显示封面"
+                                        )
+                                    }
+                                }
                                 IconButton(onClick = { showBookmarksDialog = true }) {
                                     Icon(Icons.Default.BookmarkAdd, contentDescription = "书签")
                                 }

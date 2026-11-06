@@ -1067,6 +1067,14 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                     .verticalScroll(rememberScrollState())
             ) {
                 ChangelogSection(
+                    version = "3.4.3beta2",
+                    items = listOf(
+                        "阅读器顶栏新增「外屏显示封面」入口：只在使用内屏时出现，实心封面图标表示已开启，线框图标表示已关闭。",
+                        "修复修改字号、行距、翻页方式或「横屏双页显示」等设置时会顺带关闭外屏封面的问题。",
+                        "发生折叠动作时自动关闭该开关；改其他显示设置不会联动关闭。"
+                    )
+                )
+                ChangelogSection(
                     version = "3.4.3beta",
                     items = listOf(
                         "新增折叠屏外屏显示封面（Beta，测试功能）：展开用内屏看书时，把本书封面显示在外屏给旁边的人看。",
