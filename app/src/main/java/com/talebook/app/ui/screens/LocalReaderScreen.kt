@@ -1699,11 +1699,6 @@ if (showProgressJumpDialog) {
                         )
                     }
                     val isInnerScreenAdv = LocalConfiguration.current.smallestScreenWidthDp >= 600
-                    LaunchedEffect(isInnerScreenAdv) {
-                        if (!isInnerScreenAdv && readerSettings.coverScreenEnabled) {
-                            viewModel.updateCoverScreenEnabled(false)
-                        }
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1729,7 +1724,7 @@ if (showProgressJumpDialog) {
                                 )
                             }
                             Text(
-                                text = "测试功能，需开启手机调试，且可能不稳定",
+                                text = "测试功能，可能不稳定",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

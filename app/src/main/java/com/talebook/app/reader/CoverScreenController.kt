@@ -42,11 +42,11 @@ import kotlinx.coroutines.launch
  *
  * 设备没有该区域、或书籍没有封面时不做任何事；折叠状态变化导致区域不可用时自动结束会话。
  *
- * 调试路径（实验）：部分厂商（如小米）不提供背屏区域，但系统里仍注册着一块带
- * FLAG_PRESENTATION 的内置副屏。把全局设置 talebook_cover_debug 置为 1 后，
- * 这里会退化成直接用 Presentation 往那块屏画封面，用来验证渲染链路。
- * 注意这类机型的副屏在展开态是被关电的，需要先用
- * adb shell cmd display enable-display <id> 点亮。
+ * 直连外屏（实验路径）：部分厂商不提供背屏区域，但系统里仍注册着内置外屏，
+ * 这时直接用 Presentation 往那块屏画封面。这类机型展开态默认只给内屏供电，
+ * 所以这里会自己尝试点亮外屏一次：先试系统的点亮屏幕接口，再试 cmd display enable-display，
+ * 两者都失败时把原因写进日志。
+ * 另有备用触发方式：把全局设置 talebook_cover_debug 置为 1（供 adb 调试用）。
  */
 class CoverScreenController(private val activity: Activity) {
 
@@ -385,7 +385,7 @@ class CoverScreenController(private val activity: Activity) {
                 // 点亮成功后立刻再走一次，不用等下一轮轮询。
                 scope.launch { wantedCoverPath?.let { path -> presentOnSecondaryDisplay(path) } }
             } else {
-                Log.w(TAG, "应用自己点亮外屏失败（这类权限不开放给三方应用）：$failure")
+                Log.w(TAG, "应用自己点亮外屏失败：$failure")
             }
         }
     }
