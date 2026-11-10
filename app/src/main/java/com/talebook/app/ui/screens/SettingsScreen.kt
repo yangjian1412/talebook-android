@@ -1,4 +1,4 @@
-﻿package com.talebook.app.ui.screens
+package com.talebook.app.ui.screens
 
 import android.content.Intent
 import android.net.Uri
@@ -23,11 +23,13 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -55,12 +57,13 @@ import com.talebook.app.data.repository.ReaderBackupRepository
 import com.talebook.app.data.repository.ReaderCacheRepository
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.data.server.ServerType
+import com.talebook.app.reader.tts.EdgeSpeech
 import com.talebook.app.reader.tts.TtsAudioPlayer
-import com.talebook.app.reader.tts.TtsEngine
-import com.talebook.app.reader.tts.TtsEngineConfig
 import com.talebook.app.reader.tts.TtsHttp
 import com.talebook.app.reader.tts.TtsListener
 import com.talebook.app.reader.tts.TtsPresets
+import com.talebook.app.reader.tts.TtsRequestFormat
+import com.talebook.app.reader.tts.TtsService
 import com.talebook.app.reader.tts.TtsSpeechOptions
 import com.talebook.app.reader.tts.TtsVoice
 import com.talebook.app.ui.components.LoginCaptchaDialog
@@ -859,68 +862,212 @@ private fun ThemeOptionRow(
 }
 
 /**
- * 「朗读」一节：选哪套引擎、在线服务的地址和口令、模型和音色。
+ * 「朗读」一节：选哪一套朗读，配几套在线服务，选用其中一套。
  *
- * 手机内置的引擎不用填任何东西；在线引擎要先能填地址、取列表、试听，
- * 确认能用再去读书，不然读一半才发现连不上很难看。
+ * 手机内置不用配任何东西；在线的可以配好几套（自建服务、MiMo、Edge 各来一套都行），
+ * 配的时候可以读模型、读音色、先试听，确认能用再去读书，不然读一半才发现连不上很难看。
  */
 @Composable
 private fun TtsSettingsSection(settingsRepository: SettingsRepository) {
+    val scope = rememberCoroutineScope()
+    val services by settingsRepository.ttsServices.collectAsState(initial = emptyList())
+    val activeServiceId by settingsRepository.ttsActiveServiceId.collectAsState(initial = TtsService.BUILT_IN_ID)
+    val wifiOnly by settingsRepository.ttsWifiOnly.collectAsState(initial = true)
+    var editingService by remember { mutableStateOf<TtsService?>(null) }
+    var deletingService by remember { mutableStateOf<TtsService?>(null) }
+
+    Text(text = "朗读", style = MaterialTheme.typography.titleMedium)
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(text = "用哪一套朗读", style = MaterialTheme.typography.titleSmall)
+    Spacer(modifier = Modifier.height(4.dp))
+    Column(modifier = Modifier.selectableGroup()) {
+        ReaderOptionRow(
+            selected = activeServiceId == TtsService.BUILT_IN_ID,
+            icon = Icons.Default.PhoneAndroid,
+            label = TtsService.BUILT_IN_LABEL,
+            description = TtsRequestFormat.BUILT_IN.description,
+            onSelect = { scope.launch { settingsRepository.setTtsActiveService(TtsService.BUILT_IN_ID) } }
+        )
+        services.forEach { service ->
+            TtsServiceRow(
+                service = service,
+                selected = service.id == activeServiceId,
+                onSelect = { scope.launch { settingsRepository.setTtsActiveService(service.id) } },
+                onEdit = { editingService = service },
+                onAskDelete = { deletingService = service }
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    OutlinedButton(
+        onClick = { editingService = TtsService(id = "", format = TtsRequestFormat.OPENAI_SPEECH) },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(Icons.Default.Add, contentDescription = null)
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("添加朗读服务")
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        text = "上面两套是现成的：手机内置的不联网、也没有次数限制；Edge 是微软的在线语音，免费、不用配，" +
+            "点它就换过去了（点右边的笔只能改它用的音色）。自己家的服务、小米 MiMo 用「添加朗读服务」加，" +
+            "加几套都行，在这里选现在用哪一套。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("只在 Wi-Fi 下用在线服务", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = "开着时用移动数据会自动改回${TtsService.BUILT_IN_LABEL}的；关掉则移动数据也走在线服务。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        CompactSwitch(
+            checked = wifiOnly,
+            onCheckedChange = { value -> scope.launch { settingsRepository.setTtsWifiOnly(value) } }
+        )
+    }
+
+    deletingService?.let { doomed ->
+        AlertDialog(
+            onDismissRequest = { deletingService = null },
+            title = { Text("删掉这套朗读服务？") },
+            text = { Text("要删掉「${doomed.displayName}」。正在用它的会改回${TtsService.BUILT_IN_LABEL}的。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val target = doomed.id
+                        deletingService = null
+                        scope.launch { settingsRepository.deleteTtsService(target) }
+                    }
+                ) {
+                    Text("删掉", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingService = null }) { Text("取消") }
+            }
+        )
+    }
+
+    editingService?.let { service ->
+        TtsServiceEditDialog(
+            service = service,
+            onDismiss = { editingService = null },
+            onSaved = { draft ->
+                val isNewService = service.id.isBlank()
+                scope.launch {
+                    if (draft.isEdge) {
+                        // Edge 不用配地址和 Key，能改的只有用哪个音色。
+                        settingsRepository.setTtsServiceVoice(TtsService.EDGE_ID, draft.voice)
+                    } else {
+                        val saved = settingsRepository.saveTtsService(draft)
+                        if (isNewService) settingsRepository.setTtsActiveService(saved.id)
+                    }
+                    editingService = null
+                }
+            }
+        )
+    }
+}
+
+/** 列表里的一条：选它、改它（Edge 只能改音色）、删它（现成的那两套删不掉）。 */
+@Composable
+private fun TtsServiceRow(
+    service: TtsService,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onEdit: () -> Unit,
+    onAskDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                onClick = onSelect,
+                role = Role.RadioButton
+            )
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            imageVector = if (service.isEdge) Icons.Default.Public else Icons.Default.Cloud,
+            contentDescription = null
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(service.displayName, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = service.summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
+            Icon(
+                if (service.isEdge) Icons.Default.Tune else Icons.Default.Edit,
+                contentDescription = if (service.isEdge) "选音色" else "编辑"
+            )
+        }
+        if (!service.isFixed) {
+            IconButton(onClick = onAskDelete, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Delete, contentDescription = "删除")
+            }
+        }
+    }
+}
+
+/**
+ * 配一套朗读服务：名字、走哪种接口、地址和口令、模型、音色，外加试听。
+ *
+ * Edge 那一套不用配地址和 Key，只让它挑音色。
+ * 模型和音色都可以从服务读出来再选，也可以自己填；服务不给列表时用预置的那几个。
+ */
+@Composable
+private fun TtsServiceEditDialog(
+    service: TtsService,
+    onDismiss: () -> Unit,
+    onSaved: (TtsService) -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val engineName by settingsRepository.ttsEngine.collectAsState(initial = TtsEngine.BUILT_IN.name)
-    val savedUrl by settingsRepository.ttsServiceUrl.collectAsState(initial = "")
-    val savedApiKey by settingsRepository.ttsServiceApiKey.collectAsState(initial = "")
-    val savedModel by settingsRepository.ttsServiceModel.collectAsState(initial = "")
-    val savedVoice by settingsRepository.ttsVoiceName.collectAsState(initial = "")
-    val wifiOnly by settingsRepository.ttsWifiOnly.collectAsState(initial = true)
-
-    val engine = TtsEngine.fromName(engineName)
-    var editUrl by remember(savedUrl) { mutableStateOf(savedUrl) }
-    var editApiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
-    var editModel by remember(savedModel) { mutableStateOf(savedModel) }
+    var name by remember { mutableStateOf(service.name) }
+    var format by remember { mutableStateOf(service.format) }
+    var baseUrl by remember { mutableStateOf(service.baseUrl) }
+    var apiKey by remember { mutableStateOf(service.apiKey) }
+    var model by remember { mutableStateOf(service.model) }
+    var voice by remember { mutableStateOf(service.voice) }
     var showApiKey by remember { mutableStateOf(false) }
+    var modelOptions by remember { mutableStateOf(presetModelOptions(service.format)) }
+    var voiceOptions by remember { mutableStateOf(presetVoiceOptions(service.format)) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var voiceMenuExpanded by remember { mutableStateOf(false) }
-    var modelChoices by remember(engine, savedModel) { mutableStateOf(modelPresets(engine)) }
-    var voiceChoices by remember(engine, savedVoice) { mutableStateOf(voicePresets(engine)) }
     var fetching by remember { mutableStateOf(false) }
     var previewing by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
 
-    fun currentConfig(): TtsEngineConfig = TtsEngineConfig(
-        engine = engine,
-        baseUrl = editUrl,
-        apiKey = editApiKey,
-        model = editModel.ifBlank { savedModel },
-        voice = savedVoice,
-        wifiOnly = wifiOnly
+    fun draft(): TtsService = service.copy(
+        name = name.trim(),
+        format = format,
+        baseUrl = baseUrl.trim(),
+        apiKey = apiKey.trim(),
+        model = model.trim(),
+        voice = voice.trim()
     )
 
-    /**
-     * 保存引擎设置。地址、口令、模型默认用界面上正填着的值，
-     * 换引擎时 SettingsRepository 会把之前选的音色清掉。
-     */
-    fun saveSettings(
-        nextEngine: TtsEngine = engine,
-        url: String = editUrl,
-        apiKey: String = editApiKey,
-        model: String = editModel.ifBlank { savedModel },
-        wifi: Boolean = wifiOnly
-    ) {
-        scope.launch {
-            settingsRepository.saveTtsEngine(
-                engine = nextEngine,
-                baseUrl = url,
-                apiKey = apiKey,
-                model = model,
-                wifiOnly = wifi,
-                previousEngine = engine
-            )
-        }
-    }
-
-    // 试听用的播放器；离开这一页就放掉，不占着声道。
+    // 试听用的播放器；关掉这个对话框就放掉声道。
     val previewPlayer = remember {
         TtsAudioPlayer(context, object : TtsListener {
             override fun onSpeakStarted(utteranceId: String) = Unit
@@ -933,30 +1080,39 @@ private fun TtsSettingsSection(settingsRepository: SettingsRepository) {
     }
 
     fun fetchLists() {
-        val config = currentConfig()
-        if (!config.isUsable) {
-            notice = "先填服务地址"
-            return
-        }
+        val current = draft()
         fetching = true
-        notice = "正在读取模型和音色…"
+        notice = "正在读…"
         scope.launch {
-            val serviceModels = runCatching { withContext(Dispatchers.IO) { TtsHttp.models(config) } }.getOrNull().orEmpty()
-            val serviceVoices = runCatching { withContext(Dispatchers.IO) { TtsHttp.voices(config) } }.getOrNull().orEmpty()
+            val models = when (current.format) {
+                TtsRequestFormat.EDGE, TtsRequestFormat.BUILT_IN -> presetModelOptions(current.format)
+                else -> runCatching { withContext(Dispatchers.IO) { TtsHttp.models(current) } }.getOrNull().orEmpty()
+                    .ifEmpty { presetModelOptions(current.format) }
+            }
+            val voices = when (current.format) {
+                TtsRequestFormat.EDGE -> runCatching { withContext(Dispatchers.IO) { EdgeSpeech.voicesBlocking() } }
+                    .getOrNull().orEmpty().ifEmpty { presetVoiceOptions(current.format) }
+                TtsRequestFormat.BUILT_IN -> presetVoiceOptions(current.format)
+                else -> runCatching { withContext(Dispatchers.IO) { TtsHttp.voices(current) } }.getOrNull().orEmpty()
+                    .ifEmpty { presetVoiceOptions(current.format) }
+            }
+            modelOptions = models
+            voiceOptions = voices
             fetching = false
-            if (serviceModels.isNotEmpty()) modelChoices = serviceModels
-            if (serviceVoices.isNotEmpty()) voiceChoices = serviceVoices
             notice = when {
-                serviceModels.isEmpty() && serviceVoices.isEmpty() ->
-                    "这个服务不提供列表，先用了默认的候选项；模型名可以手写"
-                else -> "读到 ${serviceModels.size} 个模型、${serviceVoices.size} 个音色"
+                models.isNotEmpty() && voices.isNotEmpty() ->
+                    "读到 ${models.size} 个模型、${voices.size} 个音色；选一个就行，也可以自己填"
+
+                voices.isNotEmpty() -> "读到 ${voices.size} 个音色；选一个就行，也可以自己填"
+                models.isNotEmpty() -> "读到 ${models.size} 个模型；这个服务没给音色列表，自己填一个"
+                else -> "这个服务没读到列表；模型和音色自己填也行"
             }
         }
     }
 
     fun previewVoice() {
-        val config = currentConfig()
-        if (!config.isUsable) {
+        val current = draft()
+        if (!current.isUsable) {
             notice = "先填服务地址"
             return
         }
@@ -965,11 +1121,12 @@ private fun TtsSettingsSection(settingsRepository: SettingsRepository) {
         scope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    TtsHttp.synthesize(
-                        config,
-                        "这是一段试听，用来确认地址、口令和音色都能用。",
-                        TtsSpeechOptions(voice = config.voice)
-                    )
+                    val options = TtsSpeechOptions(voice = current.voice)
+                    if (current.format == TtsRequestFormat.EDGE) {
+                        EdgeSpeech.synthesize(PREVIEW_TEXT, options)
+                    } else {
+                        TtsHttp.synthesize(current, PREVIEW_TEXT, options)
+                    }
                 }
             }
             previewing = false
@@ -987,211 +1144,248 @@ private fun TtsSettingsSection(settingsRepository: SettingsRepository) {
         }
     }
 
-    Text(text = "朗读", style = MaterialTheme.typography.titleMedium)
-    Spacer(modifier = Modifier.height(8.dp))
-    Text(text = "用哪套引擎", style = MaterialTheme.typography.titleSmall)
-    Spacer(modifier = Modifier.height(4.dp))
-    Column(modifier = Modifier.selectableGroup()) {
-        ReaderOptionRow(
-            selected = engine == TtsEngine.BUILT_IN,
-            icon = Icons.Default.PhoneAndroid,
-            label = "手机内置",
-            description = "用系统里的朗读引擎，不联网、没有次数限制",
-            onSelect = { saveSettings(nextEngine = TtsEngine.BUILT_IN) }
-        )
-        ReaderOptionRow(
-            selected = engine == TtsEngine.OPENAI_SPEECH,
-            icon = Icons.Default.Cloud,
-            label = "在线模型（OpenAI 兼容）",
-            description = "自建服务或兼容网关，请求走 /v1/audio/speech",
-            onSelect = { saveSettings(nextEngine = TtsEngine.OPENAI_SPEECH) }
-        )
-        ReaderOptionRow(
-            selected = engine == TtsEngine.OPENAI_CHAT,
-            icon = Icons.Default.Public,
-            label = "在线模型（小米 MiMo 这类）",
-            description = "请求走 /v1/chat/completions，音频在返回里",
-            onSelect = { saveSettings(nextEngine = TtsEngine.OPENAI_CHAT) }
-        )
+    // Edge 那一套只是要挑音色：打开就把微软的音色列表读出来，省得还要再点一下。
+    LaunchedEffect(service.id) {
+        if (service.isEdge) fetchLists()
     }
-    Spacer(modifier = Modifier.height(12.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("只在 Wi-Fi 下用在线引擎", style = MaterialTheme.typography.bodyLarge)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
             Text(
-                text = "开着时用移动数据会自动改回内置引擎；关掉则移动数据也走在线引擎。",
+                when {
+                    service.isEdge -> "Edge 用哪个音色"
+                    service.id.isBlank() -> "添加朗读服务"
+                    else -> "改这套朗读服务"
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (service.isEdge) {
+                    Text(
+                        text = "微软 Edge 的在线语音：免费、不用填地址和 Key，这里只能挑用哪个音色。" +
+                            "打开就已经把微软的音色列表读好了（中文的排在前面），选一个就行，也可以自己填；" +
+                            "不确定就先点「试听」。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("叫什么名字") },
+                        placeholder = { Text("比如：家里的电脑、MiMo") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Text(text = "哪种接口", style = MaterialTheme.typography.titleSmall)
+                    Column(modifier = Modifier.selectableGroup()) {
+                        TtsRequestFormat.addable.forEach { item ->
+                            ThemeOptionRow(
+                                selected = format == item,
+                                icon = Icons.Default.Cloud,
+                                label = when (item) {
+                                    TtsRequestFormat.OPENAI_SPEECH -> "OpenAI 兼容的 /audio/speech"
+                                    else -> "OpenAI 兼容的 /chat/completions（MiMo）"
+                                },
+                                onSelect = {
+                                    format = item
+                                    modelOptions = presetModelOptions(item)
+                                    voiceOptions = presetVoiceOptions(item)
+                                }
+                            )
+                        }
+                    }
+                    Text(
+                        text = format.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = { baseUrl = it.trim() },
+                        label = { Text("服务地址") },
+                        placeholder = {
+                            Text(if (format == TtsRequestFormat.OPENAI_CHAT) TtsPresets.MIMO_BASE_URL else "https://192.168.1.20:8880/v1")
+                        },
+                        supportingText = { Text("填到 /v1 为止，后面的路径由程序自己接") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                    )
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it.trim() },
+                        label = { Text("API Key（自建服务可以留空）") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            IconButton(onClick = { showApiKey = !showApiKey }) {
+                                Icon(
+                                    if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showApiKey) "隐藏" else "显示"
+                                )
+                            }
+                        }
+                    )
+                    PickerFieldRow(
+                        label = "模型",
+                        value = model,
+                        placeholder = "模型名",
+                        options = modelOptions,
+                        selectedId = model,
+                        expanded = modelMenuExpanded,
+                        onExpandedChange = { modelMenuExpanded = it },
+                        onValueChange = { model = it },
+                        onPick = { picked ->
+                            model = picked
+                            modelMenuExpanded = false
+                        }
+                    )
+                }
+                PickerFieldRow(
+                    label = "音色",
+                    value = voice,
+                    placeholder = if (format == TtsRequestFormat.EDGE) TtsPresets.EDGE_VOICES.first().id else "音色名",
+                    options = voiceOptions,
+                    selectedId = voice,
+                    expanded = voiceMenuExpanded,
+                    onExpandedChange = { voiceMenuExpanded = it },
+                    onValueChange = { voice = it },
+                    onPick = { picked ->
+                        voice = picked
+                        voiceMenuExpanded = false
+                    }
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { fetchLists() },
+                        modifier = Modifier.weight(1f),
+                        enabled = !fetching
+                    ) { Text(if (fetching) "读取中…" else if (service.isEdge) "读音色列表" else "读模型和音色") }
+                    OutlinedButton(
+                        onClick = { previewVoice() },
+                        modifier = Modifier.weight(1f),
+                        enabled = !previewing
+                    ) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(if (previewing) "试听中…" else "试听")
+                    }
+                }
+                notice?.let { line ->
+                    Text(
+                        text = line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSaved(draft()) }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+/** 一个文本框加一个下拉：能自己填，也能从读出来的列表里选。 */
+@Composable
+private fun PickerFieldRow(
+    label: String,
+    value: String,
+    placeholder: String,
+    options: List<TtsVoice>,
+    selectedId: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onValueChange: (String) -> Unit,
+    onPick: (String) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(text = label, style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = { Text(placeholder) },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            Box {
+                OutlinedButton(
+                    onClick = { onExpandedChange(true) },
+                    enabled = options.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) { Text("选") }
+                DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+                    options.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (option.label != option.id) {
+                                        Text(
+                                            text = option.id,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = { onPick(option.id) }
+                        )
+                    }
+                }
+            }
+        }
+        if (selectedId.isNotBlank() && options.none { option -> option.id == selectedId }) {
+            Text(
+                text = "这个${label}不在读出来的列表里，照用也行",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        CompactSwitch(
-            checked = wifiOnly,
-            onCheckedChange = { value -> saveSettings(wifi = value) }
-        )
-    }
-
-    if (engine == TtsEngine.BUILT_IN) {
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "内置引擎不需要设置。语速、音色在阅读页面打开朗读面板时调。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        return
-    }
-
-    Spacer(modifier = Modifier.height(16.dp))
-    OutlinedTextField(
-        value = editUrl,
-        onValueChange = { editUrl = it.trim() },
-        label = { Text("服务地址") },
-        placeholder = {
-            Text(if (engine == TtsEngine.OPENAI_CHAT) TtsPresets.MIMO_BASE_URL else "https://192.168.1.20:8880/v1")
-        },
-        supportingText = { Text("填到 /v1 为止，后面的 /audio/speech 这类路径由程序自己接") },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-    )
-    Spacer(modifier = Modifier.height(8.dp))
-    OutlinedTextField(
-        value = editApiKey,
-        onValueChange = { editApiKey = it.trim() },
-        label = { Text("API Key（自建服务可以留空）") },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        trailingIcon = {
-            IconButton(onClick = { showApiKey = !showApiKey }) {
-                Icon(
-                    if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                    contentDescription = if (showApiKey) "隐藏" else "显示"
-                )
-            }
-        }
-    )
-    Spacer(modifier = Modifier.height(8.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Button(
-            onClick = {
-                saveSettings(url = editUrl, apiKey = editApiKey, model = editModel)
-                notice = "已保存"
-            },
-            modifier = Modifier.weight(1f)
-        ) { Text("保存") }
-        OutlinedButton(
-            onClick = { fetchLists() },
-            modifier = Modifier.weight(1f),
-            enabled = !fetching
-        ) { Text(if (fetching) "读取中…" else "读取模型和音色") }
-    }
-    Spacer(modifier = Modifier.height(12.dp))
-    Text(text = "模型", style = MaterialTheme.typography.titleSmall)
-    Spacer(modifier = Modifier.height(4.dp))
-    Box {
-        OutlinedButton(
-            onClick = { modelMenuExpanded = true },
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            Text(
-                text = editModel.ifBlank { savedModel }.ifBlank { "用服务默认的模型" },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        DropdownMenu(expanded = modelMenuExpanded, onDismissRequest = { modelMenuExpanded = false }) {
-            modelChoices.forEach { item ->
-                DropdownMenuItem(
-                    text = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    onClick = {
-                        editModel = item.id
-                        saveSettings(model = item.id)
-                        modelMenuExpanded = false
-                    }
-                )
-            }
-        }
-    }
-    Spacer(modifier = Modifier.height(8.dp))
-    OutlinedTextField(
-        value = editModel,
-        onValueChange = { editModel = it.trim() },
-        label = { Text("模型名（服务不给列表时自己填）") },
-        supportingText = { Text("填完记得点上面的保存") },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true
-    )
-    Spacer(modifier = Modifier.height(12.dp))
-    Text(text = "音色", style = MaterialTheme.typography.titleSmall)
-    Spacer(modifier = Modifier.height(4.dp))
-    Box {
-        OutlinedButton(
-            onClick = { voiceMenuExpanded = true },
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            Text(
-                text = voiceChoices.firstOrNull { item -> item.id == savedVoice }?.label
-                    ?: savedVoice.ifBlank { "用服务默认的音色" },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        DropdownMenu(expanded = voiceMenuExpanded, onDismissRequest = { voiceMenuExpanded = false }) {
-            voiceChoices.forEach { item ->
-                DropdownMenuItem(
-                    text = { Text(item.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    onClick = {
-                        scope.launch { settingsRepository.saveTtsVoice(item.id) }
-                        voiceMenuExpanded = false
-                    }
-                )
-            }
-        }
-    }
-    Spacer(modifier = Modifier.height(8.dp))
-    OutlinedButton(
-        onClick = { previewVoice() },
-        modifier = Modifier.fillMaxWidth(),
-        enabled = !previewing
-    ) {
-        Icon(Icons.Default.VolumeUp, contentDescription = null)
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(if (previewing) "试听中…" else "试听")
-    }
-    notice?.let { line ->
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = line,
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.bodySmall
-        )
     }
 }
 
-/** 服务没给模型列表时的候选，界面上至少有的选。 */
-private fun modelPresets(engine: TtsEngine): List<TtsVoice> = when (engine) {
-    TtsEngine.OPENAI_CHAT -> listOf(TtsVoice(TtsPresets.MIMO_MODEL, TtsPresets.MIMO_MODEL))
-    TtsEngine.OPENAI_SPEECH -> listOf(TtsVoice(TtsPresets.OPENAI_SPEECH_MODEL, TtsPresets.OPENAI_SPEECH_MODEL))
-    TtsEngine.BUILT_IN -> emptyList()
+/** 服务没给模型列表时的候选。 */
+private fun presetModelOptions(format: TtsRequestFormat): List<TtsVoice> = when (format) {
+    TtsRequestFormat.OPENAI_CHAT -> TtsPresets.MIMO_MODELS
+    TtsRequestFormat.OPENAI_SPEECH -> listOf(TtsVoice(TtsPresets.OPENAI_SPEECH_MODEL, TtsPresets.OPENAI_SPEECH_MODEL))
+    TtsRequestFormat.EDGE, TtsRequestFormat.BUILT_IN -> emptyList()
 }
 
 /** 服务没给音色列表时的候选。 */
-private fun voicePresets(engine: TtsEngine): List<TtsVoice> = when (engine) {
-    TtsEngine.OPENAI_CHAT -> TtsPresets.MIMO_VOICES
-    TtsEngine.OPENAI_SPEECH -> TtsPresets.OPENAI_VOICES
-    TtsEngine.BUILT_IN -> emptyList()
+private fun presetVoiceOptions(format: TtsRequestFormat): List<TtsVoice> = when (format) {
+    TtsRequestFormat.OPENAI_CHAT -> TtsPresets.MIMO_VOICES
+    TtsRequestFormat.OPENAI_SPEECH -> TtsPresets.OPENAI_VOICES
+    TtsRequestFormat.EDGE -> TtsPresets.EDGE_VOICES
+    TtsRequestFormat.BUILT_IN -> emptyList()
 }
+
+/** 试听用的一句话。 */
+private const val PREVIEW_TEXT = "这是一段试听，用来确认地址、口令和音色都能用。"
 
 @Composable
 private fun AccentPicker(
@@ -1424,11 +1618,11 @@ private fun ChangelogDialog(onDismiss: () -> Unit) {
                 ChangelogSection(
                     version = "3.4.3",
                     items = listOf(
-                        "朗读可以换引擎：除了手机内置的朗读，还能用在线或自建的语音模型（设置 → 朗读）。填服务地址（填到 /v1 为止）和 API Key，就能从服务返回的列表里选模型和音色；服务不给列表时用默认的候选项，模型名也可以自己填，还能先试听一句。",
-                        "支持两类接口：OpenAI 兼容的 /v1/audio/speech（自建服务、Kokoro-FastAPI 等），以及小米 MiMo 这类走 /v1/chat/completions 的接口。",
-                        "默认只在 Wi-Fi 下用在线引擎，用移动数据时自动改回内置引擎；不想这样就把「只在 Wi-Fi 下用在线引擎」关掉。",
-                        "在线引擎读不成会退回内置的并说明原因；下一句的音频会提前取好，句与句之间不会明显空一下，音频只在内存里播放，不写文件、也不占阅读缓存。",
-                        "折叠屏外屏显示封面从 Beta 转正：展开用内屏时外屏显示本书封面，不用时会把外屏下电。"
+                        "朗读可以换引擎（设置 → 朗读）：列表里现成就有两套，手机内置的不联网、也没有次数限制；微软 Edge 的在线语音免费、不用配任何东西，只需挑一个音色。",
+                        "「添加朗读服务」可以加好几套，两种 OpenAI 兼容的接口任选：/audio/speech（自建服务、Kokoro-FastAPI 等）和 /chat/completions（小米 MiMo 这类）；每套存自己的名字、地址、Key、模型和音色，读的时候选一套用。",
+                        "配的时候可以读模型和音色列表（也能自己填），还能先试听一句，确认能用再去读书。",
+                        "默认只在 Wi-Fi 下用在线服务（可以关掉）；网络不合适或者在线那套读不成，会自动改用手机内置的并说明原因。下一句的音频会提前取好，句与句之间不会明显空一下，音频只在内存里播放，不写文件、也不占阅读缓存。",
+                        "折叠屏支持在外屏显示本书封面（测试功能，只在小米 18 Fold 上验证过）：展开用内屏读书时外屏显示封面，不用时会把外屏下电；开关在阅读面板的工具栏里，阅读设置里也有说明和已知前提。"
                     )
                 )
                 ChangelogSection(

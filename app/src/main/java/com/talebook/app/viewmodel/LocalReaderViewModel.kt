@@ -30,13 +30,10 @@ import com.talebook.app.reader.ReadiumEngine
 import com.talebook.app.reader.ReadiumSessionStore
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.TtsPlaybackService
-import com.talebook.app.reader.tts.HttpTtsBackend
-import com.talebook.app.reader.tts.SystemTtsBackend
 import com.talebook.app.reader.tts.TtsBackend
-import com.talebook.app.reader.tts.TtsEngine
-import com.talebook.app.reader.tts.TtsEngineConfig
 import com.talebook.app.reader.tts.TtsEngines
 import com.talebook.app.reader.tts.TtsListener
+import com.talebook.app.reader.tts.TtsService
 import com.talebook.app.reader.tts.TtsSpeechOptions
 import com.talebook.app.reader.tts.TtsVoice
 import com.talebook.app.ui.theme.ThemePresets
@@ -183,6 +180,9 @@ class LocalReaderViewModel : ViewModel() {
     private var tempLocalFile: File? = null
     private var tempLocalEpubFile: File? = null
     private var ttsBackend: TtsBackend? = null
+
+    /** 现在在用的是哪一套朗读服务；内置的 id 是空的。 */
+    private var ttsServiceId: String = TtsService.BUILT_IN_ID
     private var ttsQueue: List<TtsUtterance> = emptyList()
     private var ttsIndex = 0
     private var ttsGeneration = 0
@@ -292,10 +292,14 @@ class LocalReaderViewModel : ViewModel() {
                                 customFontName = settingsRepository.readerCustomFontName.first(),
                                 coverScreenEnabled = _uiState.value.readerSettings.coverScreenEnabled,
                             )
+                            val activeTtsService = settingsRepository.activeTtsService()
+                            ttsServiceId = activeTtsService.id
                             val ttsSettings = ReaderTtsState(
                                 speechRate = settingsRepository.ttsSpeechRate.first(),
                                 pitch = settingsRepository.ttsPitch.first(),
-                                voiceName = settingsRepository.ttsVoiceName.first(),
+                                voiceName = activeTtsService.voice,
+                                engineLabel = activeTtsService.displayName,
+                                supportsPitch = activeTtsService.supportsPitch,
                                 sleepEnabled = settingsRepository.ttsSleepEnabled.first(),
                                 sleepMinutes = settingsRepository.ttsSleepMinutes.first().coerceIn(5, 180)
                             )
@@ -1270,7 +1274,10 @@ private suspend fun openReadiumSession(
 
     fun updateTtsVoice(voiceName: String) {
         _uiState.update { it.copy(ttsState = it.ttsState.copy(voiceName = voiceName)) }
-        saveTtsSettings()
+        // 音色跟着当前那套服务存；内置引擎用的还是系统那一份设置。
+        val context = appContext ?: return
+        val serviceId = ttsServiceId
+        viewModelScope.launch { SettingsRepository(context).setTtsServiceVoice(serviceId, voiceName) }
     }
 
     fun updateTtsSleep(enabled: Boolean, minutes: Int = _uiState.value.ttsState.sleepMinutes) {
@@ -1316,7 +1323,17 @@ private suspend fun openReadiumSession(
             ttsIndex = queue.indexOfFirst { it.progression >= currentProgression }.takeIf { it >= 0 } ?: 0
             ttsFellBackToBuiltIn = false
             val generation = ++ttsGeneration
-            startTtsBackend(context, generation, SettingsRepository(context).ttsEngineConfig())
+            val settingsRepository = SettingsRepository(context)
+            val service = settingsRepository.activeTtsService()
+            ttsServiceId = service.id
+            startTtsBackend(
+                context = context,
+                generation = generation,
+                service = service,
+                wifiOnly = settingsRepository.ttsWifiOnly.first(),
+                // 网络不合适或者在线那套读不成的时候用这个,连系统里选的音色一起带上。
+                fallbackService = TtsService.builtIn(settingsRepository.ttsVoiceName.first())
+            )
             if (_uiState.value.ttsState.sleepEnabled) {
                 sleepStopAtMillis = System.currentTimeMillis() + _uiState.value.ttsState.sleepMinutes * 60_000L
             }
@@ -1326,14 +1343,22 @@ private suspend fun openReadiumSession(
     /**
      * 起一个朗读引擎。
      *
-     * 设置里选了在线引擎但当前网络不允许（只在 Wi-Fi 下用），或者在线引擎起不来、读不出声音，
-     * 就退回手机内置的那个，至少书能读；一次朗读里只退一次，不再反复试。
+     * 选了在线服务但当前网络不允许（只在 Wi-Fi 下用），或者在线那套起不来、读不出声音，
+     * 就退回手机内置的，至少书能读；一次朗读里只退一次，不再反复试。
      */
-    private fun startTtsBackend(context: Context, generation: Int, config: TtsEngineConfig, note: String = "") {
-        val useOnline = config.engine != TtsEngine.BUILT_IN && TtsEngines.onlineAllowed(context, config)
+    private fun startTtsBackend(
+        context: Context,
+        generation: Int,
+        service: TtsService,
+        wifiOnly: Boolean,
+        fallbackService: TtsService,
+        note: String = ""
+    ) {
+        val useOnline = !service.isBuiltIn && TtsEngines.onlineAllowed(context, service, wifiOnly)
+        val activeService = if (useOnline) service else fallbackService
         val hint = when {
             note.isNotBlank() -> note
-            config.engine != TtsEngine.BUILT_IN && !useOnline -> "当前网络不适合用在线朗读，先用手机内置的"
+            !service.isBuiltIn && !useOnline -> "当前网络用不了在线朗读，先改用${TtsService.BUILT_IN_LABEL}的"
             else -> ""
         }
         val listener = object : TtsListener {
@@ -1350,10 +1375,12 @@ private suspend fun openReadiumSession(
                 if (useOnline && !ttsFellBackToBuiltIn) {
                     ttsFellBackToBuiltIn = true
                     startTtsBackend(
-                        context,
-                        generation,
-                        config.copy(engine = TtsEngine.BUILT_IN),
-                        "在线朗读没读成功（$message），已改用系统朗读"
+                        context = context,
+                        generation = generation,
+                        service = fallbackService,
+                        wifiOnly = wifiOnly,
+                        fallbackService = fallbackService,
+                        note = "在线朗读没读成功（$message），已改用${TtsService.BUILT_IN_LABEL}的"
                     )
                 } else {
                     onTtsError(message)
@@ -1368,13 +1395,16 @@ private suspend fun openReadiumSession(
                 focusGainResume()
             }
         }
-        val backend = if (useOnline) HttpTtsBackend(context, config, listener) else SystemTtsBackend(context, listener)
+        val backend = TtsEngines.create(context, activeService, listener)
         ttsBackend?.release()
         ttsBackend = backend
+        ttsServiceId = activeService.id
         _uiState.update { state ->
             state.copy(ttsState = state.ttsState.copy(
                 engineLabel = backend.engineLabel,
                 supportsPitch = backend.supportsPitch,
+                // 换引擎时音色跟着换：各家的音色名互不相干。
+                voiceName = activeService.voice,
                 status = hint.ifBlank { state.ttsState.status }
             ))
         }
@@ -1395,10 +1425,12 @@ private suspend fun openReadiumSession(
                 if (useOnline && !ttsFellBackToBuiltIn) {
                     ttsFellBackToBuiltIn = true
                     startTtsBackend(
-                        context,
-                        generation,
-                        config.copy(engine = TtsEngine.BUILT_IN),
-                        "在线朗读起不来（$message），已改用系统朗读"
+                        context = context,
+                        generation = generation,
+                        service = fallbackService,
+                        wifiOnly = wifiOnly,
+                        fallbackService = fallbackService,
+                        note = "在线朗读起不来（$message），已改用${TtsService.BUILT_IN_LABEL}的"
                     )
                 } else {
                     onTtsError(message)
@@ -1473,7 +1505,6 @@ private suspend fun openReadiumSession(
             SettingsRepository(context).saveTtsSettings(
                 speechRate = state.speechRate,
                 pitch = state.pitch,
-                voiceName = state.voiceName,
                 sleepEnabled = state.sleepEnabled,
                 sleepMinutes = state.sleepMinutes
             )

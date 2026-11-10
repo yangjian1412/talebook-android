@@ -336,6 +336,7 @@ app/src/main/java/com/talebook/app/
     local/               Room Entity、DAO、Database
     repository/          业务数据仓库、缓存、设置、备份
   reader/                Readium 封装、会话、Fragment、UI 事件
+    tts/                 多引擎朗读：内置 / OpenAI 兼容 / Edge，逐句队列在 ViewModel
   ui/
     navigation/          App 路由
     screens/             Compose 页面
@@ -478,44 +479,55 @@ EPUB 使用 `EpubPreferences` 实时应用：
 
 PDF 当前支持打开、进度保存、书签、当前位置笔记、反 L 点击翻页、音量键翻页、百分比/页码跳转。PDF 搜索、PDF 选区笔记、适应宽度/页面等仍需要继续专项验证。
 
-## TTS
+## TTS（朗读）
 
 相关文件：
 
-- `reader/TtsController.kt`
-- `viewmodel/LocalReaderViewModel.kt`
-- `ui/screens/LocalReaderScreen.kt`
-- `data/repository/SettingsRepository.kt`
+- `reader/tts/TtsBackend.kt`：引擎接口（`TtsBackend`、`TtsListener`、`TtsSpeechOptions`、`TtsVoice`）。
+- `reader/tts/SystemTtsBackend.kt`：手机内置的 `android.speech.tts.TextToSpeech`。
+- `reader/tts/OpenAiTtsBackend.kt`：OpenAI 兼容的两类接口（`/audio/speech`、`/chat/completions`）。
+- `reader/tts/EdgeTtsBackend.kt`、`EdgeSpeech.kt`、`EdgeTtsToken.kt`：微软 Edge 的在线语音（免费、不要 Key）。
+- `reader/tts/TtsAudioPlayer.kt`、`TtsAudioFocus.kt`：播内存里的 MP3、申请音频焦点。
+- `reader/tts/TtsEngine.kt`：`TtsRequestFormat`、`TtsService`、`TtsPresets`（MiMo / OpenAI / Edge 的预置地址、模型、音色）。
+- `reader/tts/TtsEngines.kt`：按服务造引擎、判断当前网络能不能用在线服务。
+- `reader/tts/TtsHttp.kt`：请求拼装、模型与音色清单、错误文案。
+- `viewmodel/LocalReaderViewModel.kt`：逐句队列、句级高亮与翻页、选用哪一套服务、失败退回内置。
+- `ui/screens/LocalReaderScreen.kt`（朗读面板）、`ui/screens/SettingsScreen.kt`（朗读设置）、`data/repository/SettingsRepository.kt`（存储）。
 
-当前 TTS 能力：
+按请求格式分引擎，不按品牌分：
 
-- 使用 Android 系统 `TextToSpeech`。
-- 从 Readium `Publication.content().elements()` 提取文字。
-- 按标点和长度切成句子队列。
-- 默认从当前阅读进度附近开始朗读。
-- 每句开始时通过 `ReadiumUiEvents.emitGoToLocator()` 跳到该句所属 Locator，实现自动跟随/翻页。
-- 每句开始时通过 `ReadiumUiEvents.emitTtsHighlight()` 通知阅读器以浅蓝 `Decoration.Style.Highlight` 高亮当前段落（独立装饰组 `"talebook-tts"`，与批注组 `"talebook-annotations"` 互不冲突）。
-- 支持开始、暂停、继续、停止、上一句、下一句。
-- 支持语速、音调、系统语音选择。
-- 支持睡眠模式，默认开启 30 分钟自动停止。
-- 朗读或暂停时显示阅读页浮动控制栏；完整控制仍在 TTS 面板。
-- 熄屏后不主动停止朗读。
-- 音频焦点：`TtsController` 在朗读前申请 `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`；临时丢失焦点自动暂停、恢复焦点自动继续（回调 `onFocusLoss`/`onFocusGain` 接入 ViewModel）。
-- TTS 面板内置电池优化提示与"电池优化设置"入口（`ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS`），应对部分机型后台播放被杀问题。
+| `TtsRequestFormat` | 怎么取音频 | 谁用这个 |
+| --- | --- | --- |
+| `BUILT_IN` | 系统 `TextToSpeech` | 手机内置，不联网、没有次数限制 |
+| `EDGE` | WebSocket `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1` | 微软 Edge 的在线语音，免费 |
+| `OPENAI_SPEECH` | `POST {base}/audio/speech`，返回体就是音频 | OpenAI、自建 Kokoro-FastAPI 等 |
+| `OPENAI_CHAT` | `POST {base}/chat/completions` + `audio` 参数，要读的文本放 assistant 消息，音频在 `choices[0].message.audio.data`（base64） | 小米 MiMo |
+
+要点：
+
+- 逐句队列、高亮/翻页、定时停止、音频焦点、浮动控制栏都在 ViewModel 与面板这一层，换引擎不影响；引擎只管「给一句文本 → 拿到一段音频字节」。
+- 内置引擎直接播；在线引擎把 MP3 字节交给 `TtsAudioPlayer`（`MediaPlayer` 播内存字节），不落盘、不占阅读缓存。
+- 在线引擎会预取下一句（只留一条），语速 / 音调 / 音色变了就把预取丢掉。
+- Edge 只走 WebSocket：消息头先 `Path:speech.config`（`audio-24khz-48kbitrate-mono-mp3`）再 `Path:ssml`；二进制帧前两个字节（大端）是头长度，取 `Path:audio` 之后的字节拼起来，收到 `Path:turn.end` 结束。要带 `Sec-MS-GEC` v2 令牌（`EdgeTtsToken`：按 5 分钟取整的 Windows 时间戳 + 固定客户端标识，做改过初值的 SHA-256 再套一层 CS64），音色列表用 `…/voices/list?trustedclienttoken=…`，不需要令牌。
+- 服务没有调音色的参数时 `supportsPitch = false`，朗读面板隐藏「音调」滑杆（OpenAI 那两类没有音调参数；Edge 用 SSML `<prosody>`，语速和音调都能调）。
+- 模型和音色优先从服务读（`/models`、`/audio/voices`、`/voices`；Edge 用它的 voices/list，只留 Status=GA 的中文与 en-US），读不到就用 `TtsPresets` 的预置；界面上既能自己填也能从列表选。
+- 网络条件不满足（默认「只在 Wi-Fi 下用在线服务」）或在线那套起不来、读不出声：自动退回手机内置，一次朗读里只退一次，并把原因显示在面板上。
 
 TTS 持久化设置：
 
-- `tts_speech_rate`
-- `tts_pitch`
-- `tts_voice_name`
-- `tts_sleep_enabled`
-- `tts_sleep_minutes`
+- `tts_speech_rate`、`tts_pitch`、`tts_sleep_enabled`、`tts_sleep_minutes`：全局。
+- `tts_service_list`：JSON 数组，每项 `{id,name,format,baseUrl,apiKey,model,voice}`，可以配多套。
+- `tts_active_service`：选用哪一套；空 = 手机内置；`edge` = Edge（固定存在，不写进上面那份 JSON）。
+- `tts_edge_voice`：Edge 用的音色；`tts_voice_name`：内置引擎用的音色（沿用系统那一份设置）。
+- 旧版本只存一套的键（`tts_engine`、`tts_service_url`、`tts_service_api_key`、`tts_service_model`）：读时合成一条 `id = legacy` 的记录，写一次列表就把这几个旧键删掉。
 
 限制：
 
 - 不做通知栏媒体控制（播放/暂停/上一句/下一句等锁屏控件）。
 - PDF 能抽到文本就朗读，抽不到文本显示“本书不支持朗读”。
 - OCR 不在计划内。
+- 在线服务只能读 MP3；服务返回别的格式（例如只出 WAV）时放不出来，会提示换模型。
+- Edge 的令牌算法跟着 Edge 客户端版本走（`EdgeTtsToken.SEC_MS_GEC_VERSION`）；微软换算法时这边要跟着改。
 
 ## 本地数据存储
 

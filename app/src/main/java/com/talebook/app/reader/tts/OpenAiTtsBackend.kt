@@ -13,22 +13,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 联网的朗读引擎：OpenAI 兼容的 /audio/speech（自建服务或其他兼容网关），
- * 以及小米 MiMo 那种走 /chat/completions 的格式。
+ * 走 OpenAI 那两套接口的朗读引擎：/audio/speech 和 /chat/completions（小米 MiMo）。
  *
  * 一句一句取音频，取到就播；同时提前取好下一句，不然每句之间都会空一下。
  * 音频只在内存里，不写文件。
  */
-class HttpTtsBackend(
+class OpenAiTtsBackend(
     context: Context,
-    private val config: TtsEngineConfig,
+    private val service: TtsService,
     private val listener: TtsListener
 ) : TtsBackend {
 
-    override val engineLabel: String =
-        if (config.engine == TtsEngine.OPENAI_CHAT) "MiMo 在线朗读" else "在线模型朗读"
+    override val engineLabel: String = service.displayName
 
-    /** 这类接口都没有调音色的参数，界面上的音调滑杆要藏起来。 */
+    /** 这两类接口都没有调音色的参数，界面上的音调滑杆要藏起来。 */
     override val supportsPitch: Boolean = false
 
     private val player = TtsAudioPlayer(context, listener)
@@ -45,7 +43,7 @@ class HttpTtsBackend(
     private var lastOptions = TtsSpeechOptions()
 
     override fun start(onReady: (List<TtsVoice>) -> Unit, onFailure: (String) -> Unit) {
-        if (!config.isUsable) {
+        if (!service.isUsable) {
             scope.launch { withContext(Dispatchers.Main) { onFailure("还没填朗读服务的地址") } }
             return
         }
@@ -57,9 +55,9 @@ class HttpTtsBackend(
 
     /** 服务能列出来就用它的，列不出来就用预置的，界面上至少有的选。 */
     private fun availableVoices(): List<TtsVoice> {
-        val fromService = runCatching { TtsHttp.voices(config) }.getOrNull().orEmpty()
+        val fromService = runCatching { TtsHttp.voices(service) }.getOrNull().orEmpty()
         if (fromService.isNotEmpty()) return fromService
-        return if (config.engine == TtsEngine.OPENAI_CHAT) TtsPresets.MIMO_VOICES else TtsPresets.OPENAI_VOICES
+        return if (service.format == TtsRequestFormat.OPENAI_CHAT) TtsPresets.MIMO_VOICES else TtsPresets.OPENAI_VOICES
     }
 
     override fun preload(text: String, utteranceId: String) {
@@ -67,7 +65,7 @@ class HttpTtsBackend(
         val options = lastOptions
         prepared.keys.filter { id -> id != utteranceId }.forEach { id -> prepared.remove(id) }
         scope.launch {
-            runCatching { TtsHttp.synthesize(config, text, options) }
+            runCatching { TtsHttp.synthesize(service, text, options) }
                 .onSuccess { bytes -> prepared[utteranceId] = bytes }
         }
     }
@@ -87,7 +85,7 @@ class HttpTtsBackend(
                 play(utteranceId, ready)
                 return@launch
             }
-            val result = runCatching { TtsHttp.synthesize(config, text, options) }
+            val result = runCatching { TtsHttp.synthesize(service, text, options) }
             if (speakingId != utteranceId || !isActive) return@launch
             result.fold(
                 onSuccess = { bytes -> play(utteranceId, bytes) },

@@ -2,6 +2,7 @@
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -13,8 +14,8 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.reader.ReaderScrollTapSpeed
-import com.talebook.app.reader.tts.TtsEngine
-import com.talebook.app.reader.tts.TtsEngineConfig
+import com.talebook.app.reader.tts.TtsRequestFormat
+import com.talebook.app.reader.tts.TtsService
 import com.talebook.app.ui.theme.ThemePresets
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -115,7 +116,13 @@ class SettingsRepository(private val context: Context) {
         private val TTS_SERVICE_URL_KEY = stringPreferencesKey("tts_service_url")
         private val TTS_SERVICE_KEY_KEY = stringPreferencesKey("tts_service_api_key")
         private val TTS_SERVICE_MODEL_KEY = stringPreferencesKey("tts_service_model")
+        private val TTS_SERVICE_LIST_KEY = stringPreferencesKey("tts_service_list")
+        private val TTS_ACTIVE_SERVICE_KEY = stringPreferencesKey("tts_active_service")
+        private val TTS_EDGE_VOICE_KEY = stringPreferencesKey("tts_edge_voice")
         private val TTS_WIFI_ONLY_KEY = booleanPreferencesKey("tts_wifi_only")
+
+        /** 老版本只存了一套服务，读出来时给它这个 id，省得每次启动都当新的。 */
+        private const val LEGACY_TTS_SERVICE_ID = "legacy"
         private val LIBRARY_SERVERS_KEY = stringPreferencesKey("library_servers_json")
         private val ACTIVE_LIBRARY_SERVER_ID_KEY = stringPreferencesKey("active_library_server_id")
         private val START_TAB_KEY = stringPreferencesKey("start_tab")
@@ -124,6 +131,7 @@ class SettingsRepository(private val context: Context) {
 
     private val gson = Gson()
     private val serverListType = object : TypeToken<List<LibraryServerConfig>>() {}.type
+    private val ttsServiceListType = object : TypeToken<List<TtsService>>() {}.type
 
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
         activeServerFromPrefs(prefs).baseUrl
@@ -399,67 +407,147 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[TTS_SLEEP_MINUTES_KEY] ?: 30
     }
 
-    /** 用哪套朗读引擎（内置 / 在线接口）。 */
-    val ttsEngine: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[TTS_ENGINE_KEY] ?: TtsEngine.BUILT_IN.name
+    /**
+     * 列表里能选的朗读：Edge（固定有）+ 自己配的那些。
+     *
+     * 手机内置的那条是单独画的（见 [activeTtsService]），不在这里。
+     */
+    val ttsServices: Flow<List<TtsService>> = context.dataStore.data.map { prefs ->
+        listOf(TtsService.edge(prefs[TTS_EDGE_VOICE_KEY] ?: "")) + ttsConfigsIn(prefs)
     }
 
-    /** 在线朗读服务的地址，形如 https://…/v1。 */
-    val ttsServiceUrl: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[TTS_SERVICE_URL_KEY] ?: ""
+    /** 现在选用哪一套；空字符串表示用手机内置的。 */
+    val ttsActiveServiceId: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[TTS_ACTIVE_SERVICE_KEY] ?: TtsService.BUILT_IN_ID
     }
 
-    /** 在线朗读服务的访问口令。 */
-    val ttsServiceApiKey: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[TTS_SERVICE_KEY_KEY] ?: ""
-    }
-
-    /** 在线朗读服务用的模型名。 */
-    val ttsServiceModel: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[TTS_SERVICE_MODEL_KEY] ?: ""
-    }
-
-    /** 只在 Wi-Fi 下用在线朗读，用移动数据时改回内置引擎。 */
+    /** 只在 Wi-Fi 下用联网朗读，用移动数据时改回内置引擎。 */
     val ttsWifiOnly: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[TTS_WIFI_ONLY_KEY] ?: true
     }
 
-    /** 一次读出朗读引擎的全部设置，阅读器开始朗读时用。 */
-    suspend fun ttsEngineConfig(): TtsEngineConfig {
+    /** 开始朗读时用：当前选中的那一套；内置的会带上系统里选的音色。 */
+    suspend fun activeTtsService(): TtsService {
         val prefs = context.dataStore.data.first()
-        return TtsEngineConfig(
-            engine = TtsEngine.fromName(prefs[TTS_ENGINE_KEY]),
-            baseUrl = prefs[TTS_SERVICE_URL_KEY] ?: "",
-            apiKey = prefs[TTS_SERVICE_KEY_KEY] ?: "",
-            model = prefs[TTS_SERVICE_MODEL_KEY] ?: "",
-            voice = prefs[TTS_VOICE_NAME_KEY] ?: "",
-            wifiOnly = prefs[TTS_WIFI_ONLY_KEY] ?: true
+        return serviceIn(prefs, prefs[TTS_ACTIVE_SERVICE_KEY] ?: TtsService.BUILT_IN_ID)
+    }
+
+    /** 按 id 找到那一套；内置和 Edge 都是固定有的，自己配的按存好的读。 */
+    private fun serviceIn(prefs: Preferences, serviceId: String): TtsService = when (serviceId) {
+        TtsService.BUILT_IN_ID -> TtsService.builtIn(prefs[TTS_VOICE_NAME_KEY] ?: "")
+        TtsService.EDGE_ID -> TtsService.edge(prefs[TTS_EDGE_VOICE_KEY] ?: "")
+        else -> ttsConfigsIn(prefs).firstOrNull { service -> service.id == serviceId } ?: TtsService.builtIn()
+    }
+
+    /** 只改这一套用的音色；内置的存到系统那一份设置里，Edge 存它自己的键上。 */
+    suspend fun setTtsServiceVoice(serviceId: String, voice: String) {
+        if (serviceId == TtsService.BUILT_IN_ID) {
+            saveTtsVoice(voice)
+            return
+        }
+        if (serviceId == TtsService.EDGE_ID) {
+            context.dataStore.edit { prefs ->
+                prefs[TTS_EDGE_VOICE_KEY] = voice.trim()
+            }
+            return
+        }
+        context.dataStore.edit { prefs ->
+            val services = ttsConfigsIn(prefs).map { service ->
+                if (service.id == serviceId) service.copy(voice = voice) else service
+            }
+            prefs[TTS_SERVICE_LIST_KEY] = gson.toJson(services)
+            clearLegacyServiceKeys(prefs)
+        }
+    }
+
+    /** 新增或改一套自己配的服务；没有 id 的会分配一个，返回带 id 的那条。 */
+    suspend fun saveTtsService(service: TtsService): TtsService {
+        val saved = service.copy(
+            id = service.id.ifBlank { UUID.randomUUID().toString() },
+            baseUrl = service.baseUrl.trim().trimEnd('/'),
+            apiKey = service.apiKey.trim(),
+            model = service.model.trim(),
+            voice = service.voice.trim()
         )
+        context.dataStore.edit { prefs ->
+            val services = ttsConfigsIn(prefs)
+            val index = services.indexOfFirst { item -> item.id == saved.id }
+            val updated = if (index >= 0) {
+                services.toMutableList().also { list -> list[index] = saved }
+            } else {
+                services + saved
+            }
+            prefs[TTS_SERVICE_LIST_KEY] = gson.toJson(updated)
+            // 老版本只存了一套的键写掉，省得下次读的时候又冒出一套重复的。
+            clearLegacyServiceKeys(prefs)
+        }
+        return saved
+    }
+
+    /** 删掉一套自己配的服务；正在用它的就改回内置。内置和 Edge 删不掉。 */
+    suspend fun deleteTtsService(serviceId: String) {
+        if (serviceId == TtsService.EDGE_ID) return
+        context.dataStore.edit { prefs ->
+            val services = ttsConfigsIn(prefs).filter { service -> service.id != serviceId }
+            prefs[TTS_SERVICE_LIST_KEY] = gson.toJson(services)
+            clearLegacyServiceKeys(prefs)
+            if ((prefs[TTS_ACTIVE_SERVICE_KEY] ?: TtsService.BUILT_IN_ID) == serviceId) {
+                prefs[TTS_ACTIVE_SERVICE_KEY] = TtsService.BUILT_IN_ID
+            }
+        }
     }
 
     /**
-     * 保存朗读引擎的设置。
+     * 选用哪一套。
      *
-     * 换引擎时把之前选的音色清掉：不同家的音色名互不相干，留着只会读错音色。
+     * 每套的音色各存各的（内置的在系统那份、Edge 在自己的键上、自己配的在那条记录里），
+     * 所以换的时候不用清掉谁，切回来还是原来那个音色。
      */
-    suspend fun saveTtsEngine(
-        engine: TtsEngine,
-        baseUrl: String,
-        apiKey: String,
-        model: String,
-        wifiOnly: Boolean,
-        previousEngine: TtsEngine? = null
-    ) {
+    suspend fun setTtsActiveService(serviceId: String) {
         context.dataStore.edit { prefs ->
-            prefs[TTS_ENGINE_KEY] = engine.name
-            prefs[TTS_SERVICE_URL_KEY] = baseUrl.trim()
-            prefs[TTS_SERVICE_KEY_KEY] = apiKey.trim()
-            prefs[TTS_SERVICE_MODEL_KEY] = model.trim()
-            prefs[TTS_WIFI_ONLY_KEY] = wifiOnly
-            if (previousEngine != null && previousEngine != engine) {
-                prefs.remove(TTS_VOICE_NAME_KEY)
-            }
+            prefs[TTS_ACTIVE_SERVICE_KEY] = serviceId
         }
+    }
+
+    suspend fun setTtsWifiOnly(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[TTS_WIFI_ONLY_KEY] = enabled
+        }
+    }
+
+    /** 自己配的那些服务；老版本只存了一套的，这里当成一条读出来。内置和 Edge 不在这里。 */
+    private fun ttsConfigsIn(prefs: Preferences): List<TtsService> {
+        val json = prefs[TTS_SERVICE_LIST_KEY]
+        val stored = if (json.isNullOrBlank()) {
+            emptyList()
+        } else {
+            runCatching { gson.fromJson<List<TtsService>>(json, ttsServiceListType) }.getOrNull().orEmpty()
+                .filter { service -> service.id.isNotBlank() && !service.isFixed }
+        }
+        if (stored.isNotEmpty()) return stored
+        val legacyUrl = prefs[TTS_SERVICE_URL_KEY] ?: ""
+        val legacyFormat = TtsRequestFormat.fromName(prefs[TTS_ENGINE_KEY])
+        if (legacyUrl.isBlank() || !legacyFormat.needsUrl) return emptyList()
+        return listOf(
+            TtsService(
+                id = LEGACY_TTS_SERVICE_ID,
+                name = if (legacyFormat == TtsRequestFormat.OPENAI_CHAT) "MiMo 在线朗读" else "在线朗读",
+                format = legacyFormat,
+                baseUrl = legacyUrl,
+                apiKey = prefs[TTS_SERVICE_KEY_KEY] ?: "",
+                model = prefs[TTS_SERVICE_MODEL_KEY] ?: "",
+                // 音色不带过来：那个键现在存的是内置引擎的音色，照搬只会读错。
+                voice = ""
+            )
+        )
+    }
+
+    /** 老版本只存一套服务的那几个键；已经写进列表了就清掉，省得下次又冒出来一套重复的。 */
+    private fun clearLegacyServiceKeys(prefs: MutablePreferences) {
+        prefs.remove(TTS_SERVICE_URL_KEY)
+        prefs.remove(TTS_SERVICE_KEY_KEY)
+        prefs.remove(TTS_SERVICE_MODEL_KEY)
+        prefs.remove(TTS_ENGINE_KEY)
     }
 
     suspend fun saveServerUrl(url: String) {
@@ -877,17 +965,20 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
         }
     }
 
+    /**
+     * 存朗读的语速、音调和定时停止。
+     *
+     * 音色不在这里：它跟着具体的那套服务存，用 [setTtsServiceVoice] 写。
+     */
     suspend fun saveTtsSettings(
         speechRate: Float,
         pitch: Float,
-        voiceName: String,
         sleepEnabled: Boolean,
         sleepMinutes: Int
     ) {
         context.dataStore.edit { prefs ->
             prefs[TTS_SPEECH_RATE_KEY] = speechRate.coerceIn(0.5f, 2.0f)
             prefs[TTS_PITCH_KEY] = pitch.coerceIn(0.5f, 2.0f)
-            prefs[TTS_VOICE_NAME_KEY] = voiceName
             prefs[TTS_SLEEP_ENABLED_KEY] = sleepEnabled
             prefs[TTS_SLEEP_MINUTES_KEY] = sleepMinutes.coerceIn(5, 180)
         }

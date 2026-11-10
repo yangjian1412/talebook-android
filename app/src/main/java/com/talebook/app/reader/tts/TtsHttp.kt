@@ -12,9 +12,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * 和朗读服务通信的地方：拼请求、拿模型和音色清单。
+ * 向朗读服务要音频、取模型和音色清单。
  *
  * 这里的函数都是阻塞的，调用方要在后台线程上跑。
+ * 注意一次音频不落盘：拿回来的就是字节，交给 [TtsAudioPlayer] 播。
  */
 object TtsHttp {
 
@@ -28,11 +29,11 @@ object TtsHttp {
         .build()
 
     /** 请求一句的音频；失败时抛出的异常带人能看懂的原因。 */
-    fun synthesize(config: TtsEngineConfig, text: String, options: TtsSpeechOptions): ByteArray {
-        val isChatFormat = config.engine == TtsEngine.OPENAI_CHAT
-        val url = if (isChatFormat) config.apiPath("/chat/completions") else config.apiPath("/audio/speech")
-        val body = if (isChatFormat) chatRequest(config, text, options) else speechRequest(config, text, options)
-        val request = requestBuilder(config, url)
+    fun synthesize(service: TtsService, text: String, options: TtsSpeechOptions): ByteArray {
+        val isChatFormat = service.format == TtsRequestFormat.OPENAI_CHAT
+        val url = if (isChatFormat) service.apiPath("/chat/completions") else service.apiPath("/audio/speech")
+        val body = if (isChatFormat) chatRequest(service, text, options) else speechRequest(service, text, options)
+        val request = requestBuilder(service, url)
             .post(body.toString().toRequestBody(JSON_TYPE))
             .build()
         client.newCall(request).execute().use { response ->
@@ -43,8 +44,9 @@ object TtsHttp {
     }
 
     /** 服务上能选哪些模型；取不到就返回空列表，界面上让用户自己填。 */
-    fun models(config: TtsEngineConfig): List<TtsVoice> {
-        val json = getJson(config, "/models") ?: return emptyList()
+    fun models(service: TtsService): List<TtsVoice> {
+        if (service.format == TtsRequestFormat.OPENAI_CHAT) return TtsPresets.MIMO_MODELS
+        val json = getJson(service, "/models") ?: return emptyList()
         val items = firstArray(json, "data", "models", "body")
         return items.mapNotNull { element ->
             val id = when {
@@ -57,8 +59,8 @@ object TtsHttp {
     }
 
     /** 服务上能选哪些音色；取不到就返回空列表。 */
-    fun voices(config: TtsEngineConfig): List<TtsVoice> {
-        val json = getJson(config, "/audio/voices") ?: getJson(config, "/voices") ?: return emptyList()
+    fun voices(service: TtsService): List<TtsVoice> {
+        val json = getJson(service, "/audio/voices") ?: getJson(service, "/voices") ?: return emptyList()
         val items = firstArray(json, "voices", "data")
         return items.mapNotNull { element ->
             when {
@@ -69,7 +71,7 @@ object TtsHttp {
 
                 element.isJsonObject -> {
                     val voice = element.asJsonObject
-                    val id = voice.stringOr("id", "voice", "name")?.trim().orEmpty()
+                    val id = voice.stringOr("id", "voice", "name", "shortName")?.trim().orEmpty()
                     if (id.isBlank()) null else TtsVoice(id, voice.stringOr("name", "description", "label")?.trim() ?: id)
                 }
 
@@ -78,25 +80,25 @@ object TtsHttp {
         }
     }
 
-    /** OpenAI 兼容的 /audio/speech 请求体。 */
-    private fun speechRequest(config: TtsEngineConfig, text: String, options: TtsSpeechOptions): JsonObject =
+    /** OpenAI 的 /audio/speech 请求体。 */
+    private fun speechRequest(service: TtsService, text: String, options: TtsSpeechOptions): JsonObject =
         JsonObject().apply {
-            addProperty("model", config.model.ifBlank { TtsPresets.OPENAI_SPEECH_MODEL })
+            addProperty("model", service.model.ifBlank { TtsPresets.OPENAI_SPEECH_MODEL })
             addProperty("input", text)
-            addProperty("voice", config.voice.ifBlank { TtsPresets.OPENAI_VOICES.first().id })
+            addProperty("voice", options.voice.ifBlank { TtsPresets.OPENAI_VOICES.first().id })
             addProperty("response_format", "mp3")
             addProperty("speed", options.rate.coerceIn(0.5f, 2.0f))
         }
 
     /**
-     * 小米 MiMo 那种格式的请求体。
+     * 对话接口带 audio 参数的请求体（小米 MiMo 这种）。
      *
-     * 它虽然写着 OpenAI 兼容，但要走 /chat/completions，要读的文本放在 assistant 消息里，
+     * 它也叫 OpenAI 兼容，但要走 /chat/completions，要读的文本放在 assistant 消息里，
      * 音频以 base64 放在 message.audio.data。
      */
-    private fun chatRequest(config: TtsEngineConfig, text: String, options: TtsSpeechOptions): JsonObject =
+    private fun chatRequest(service: TtsService, text: String, options: TtsSpeechOptions): JsonObject =
         JsonObject().apply {
-            addProperty("model", config.model.ifBlank { TtsPresets.MIMO_MODEL })
+            addProperty("model", service.model.ifBlank { TtsPresets.MIMO_MODEL })
             add(
                 "messages",
                 JsonArray().apply {
@@ -110,13 +112,13 @@ object TtsHttp {
                 "audio",
                 JsonObject().apply {
                     addProperty("format", "mp3")
-                    addProperty("voice", config.voice.ifBlank { TtsPresets.MIMO_VOICES.first().id })
+                    addProperty("voice", options.voice.ifBlank { TtsPresets.MIMO_VOICES.first().id })
                 }
             )
             addProperty("stream", false)
         }
 
-    /** 从 MiMo 那种返回里取出音频字节。 */
+    /** 从对话接口那种返回里取出音频字节。 */
     private fun chatAudioOf(bytes: ByteArray): ByteArray {
         val text = String(bytes, Charsets.UTF_8)
         val json = runCatching { JsonParser.parseString(text).asJsonObject }.getOrNull()
@@ -129,18 +131,18 @@ object TtsHttp {
             .getOrElse { throw IOException("服务返回的音频编码读不懂") }
     }
 
-    private fun requestBuilder(config: TtsEngineConfig, url: String): Request.Builder {
+    private fun requestBuilder(service: TtsService, url: String): Request.Builder {
         val builder = Request.Builder().url(url).header("Accept", "audio/mpeg, application/json")
-        if (config.apiKey.isNotBlank()) {
-            builder.header("Authorization", "Bearer ${config.apiKey}")
+        if (service.apiKey.isNotBlank()) {
+            builder.header("Authorization", "Bearer ${service.apiKey}")
             // 小米 MiMo 的文档用的是 api-key 头，两种都带上，省得区分服务。
-            builder.header("api-key", config.apiKey)
+            builder.header("api-key", service.apiKey)
         }
         return builder
     }
 
-    private fun getJson(config: TtsEngineConfig, path: String): JsonObject? = runCatching {
-        val request = requestBuilder(config, config.apiPath(path))
+    private fun getJson(service: TtsService, path: String): JsonObject? = runCatching {
+        val request = requestBuilder(service, service.apiPath(path))
             .header("Accept", "application/json")
             .get()
             .build()

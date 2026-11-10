@@ -2,11 +2,19 @@
 
 本项目基于 [Apache License 2.0](LICENSE) 开源。
 
-> 当前版本：`3.4.2`
+> 当前版本：`3.4.3`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 3.4.3 更新日志
+
+- 完善朗读（TTS）：可以换朗读引擎。设置 → 朗读里现成有两套，手机内置的（不联网、没有次数限制）和微软 Edge 的在线语音（免费、不用配置，只挑音色）。
+- 「添加朗读服务」可以加多套自己配的服务，两种 OpenAI 兼容接口任选：`/audio/speech`（自建服务、Kokoro-FastAPI 等）与 `/chat/completions`（小米 MiMo 这类）；每套各存自己的地址、Key、模型、音色，读的时候选一套用。
+- 配服务时能读模型和音色清单（也可以自己填），还能先试听一句；各套服务用的音色分开保存，切换服务不会互相覆盖。
+- 默认只在 Wi-Fi 下用在线服务（可关闭）；网络不合适或在线服务读不成会自动退回手机内置并说明原因。下一句的音频会提前取好；音频只在内存里播放，不落盘、不占阅读缓存。
+- 折叠屏支持在外屏显示本书封面（测试功能，仅在小米 18 Fold 上验证过）：展开用内屏时外屏显示封面，不用时给外屏下电。
 
 ### 3.4.2 更新日志
 

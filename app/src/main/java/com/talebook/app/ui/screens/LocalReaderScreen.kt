@@ -1795,13 +1795,13 @@ if (showProgressJumpDialog) {
                                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                 )
                                 Text(
-                                    text = "Beta",
+                                    text = "测试",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
                             Text(
-                                text = "测试功能，可能不稳定",
+                                text = "测试功能：只在小米 18 Fold 上验证过，其他折叠屏可能不生效",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
