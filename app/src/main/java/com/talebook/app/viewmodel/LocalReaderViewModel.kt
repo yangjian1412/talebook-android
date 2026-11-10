@@ -29,8 +29,16 @@ import com.talebook.app.reader.ReaderTheme
 import com.talebook.app.reader.ReadiumEngine
 import com.talebook.app.reader.ReadiumSessionStore
 import com.talebook.app.reader.ReadiumUiEvents
-import com.talebook.app.reader.TtsController
 import com.talebook.app.reader.TtsPlaybackService
+import com.talebook.app.reader.tts.HttpTtsBackend
+import com.talebook.app.reader.tts.SystemTtsBackend
+import com.talebook.app.reader.tts.TtsBackend
+import com.talebook.app.reader.tts.TtsEngine
+import com.talebook.app.reader.tts.TtsEngineConfig
+import com.talebook.app.reader.tts.TtsEngines
+import com.talebook.app.reader.tts.TtsListener
+import com.talebook.app.reader.tts.TtsSpeechOptions
+import com.talebook.app.reader.tts.TtsVoice
 import com.talebook.app.ui.theme.ThemePresets
 import com.talebook.app.util.TxtToEpubConverter
 import kotlinx.coroutines.Dispatchers
@@ -126,7 +134,11 @@ data class ReaderTtsState(
     val speechRate: Float = 1.0f,
     val pitch: Float = 1.0f,
     val voiceName: String = "",
-    val voices: List<String> = emptyList(),
+    val voices: List<TtsVoice> = emptyList(),
+    /** 正在用的是哪套引擎，界面上要说清楚，不然听不出是内置还是在线。 */
+    val engineLabel: String = "",
+    /** 这套引擎能不能调音调；不能就把滑杆藏起来。 */
+    val supportsPitch: Boolean = true,
     val sleepEnabled: Boolean = true,
     val sleepMinutes: Int = 30,
     val currentIndex: Int = 0,
@@ -170,10 +182,13 @@ class LocalReaderViewModel : ViewModel() {
     private var currentSourceLabel: String = ""
     private var tempLocalFile: File? = null
     private var tempLocalEpubFile: File? = null
-    private var ttsController: TtsController? = null
+    private var ttsBackend: TtsBackend? = null
     private var ttsQueue: List<TtsUtterance> = emptyList()
     private var ttsIndex = 0
     private var ttsGeneration = 0
+
+    /** 这次朗读是不是已经退回系统引擎了；退过一次就不再反复试在线引擎。 */
+    private var ttsFellBackToBuiltIn = false
     private var sleepStopAtMillis = 0L
 
     fun load(context: Context, bookId: Int) {
@@ -1188,7 +1203,7 @@ private suspend fun openReadiumSession(
     }
 
     fun pauseTts() {
-        ttsController?.stop()
+        ttsBackend?.stop()
         _uiState.update { it.copy(ttsState = it.ttsState.copy(isPlaying = false, isPaused = true, status = "已暂停")) }
     }
 
@@ -1213,7 +1228,7 @@ private suspend fun openReadiumSession(
     }
 
     fun stopTts() {
-        ttsController?.stop()
+        ttsBackend?.stop()
         sleepStopAtMillis = 0L
         _uiState.value.sessionId?.let { ReadiumUiEvents.emitTtsHighlight(it, "") }
         _uiState.update { it.copy(ttsState = it.ttsState.copy(isPlaying = false, isPaused = false, status = "已停止")) }
@@ -1221,8 +1236,8 @@ private suspend fun openReadiumSession(
 
     fun exitTts() {
         appContext?.let { TtsPlaybackService.stop(it) }
-        ttsController?.shutdown()
-        ttsController = null
+        ttsBackend?.release()
+        ttsBackend = null
         ttsQueue = emptyList()
         ttsIndex = 0
         ttsGeneration++
@@ -1299,32 +1314,97 @@ private suspend fun openReadiumSession(
             }
             ttsQueue = queue
             ttsIndex = queue.indexOfFirst { it.progression >= currentProgression }.takeIf { it >= 0 } ?: 0
-            ttsController?.shutdown()
+            ttsFellBackToBuiltIn = false
             val generation = ++ttsGeneration
-            val controller = TtsController(
-                context = context,
-                onReady = {
-                    if (ttsGeneration != generation || ttsQueue.isEmpty()) return@TtsController
-                    _uiState.update { state ->
-                        state.copy(ttsState = state.ttsState.copy(
-                            isLoading = false,
-                            total = ttsQueue.size,
-                            voices = ttsController?.voices()?.map { it.name }.orEmpty()
-                        ))
-                    }
-                    speakCurrentTts()
-                },
-                onStart = { utteranceId -> onTtsStart(utteranceId) },
-                onDone = { utteranceId -> onTtsDone(utteranceId) },
-                onError = { message -> onTtsError(message) },
-                onFocusLoss = { focusLossPause() },
-                onFocusGain = { focusGainResume() }
-            )
-            ttsController = controller
+            startTtsBackend(context, generation, SettingsRepository(context).ttsEngineConfig())
             if (_uiState.value.ttsState.sleepEnabled) {
                 sleepStopAtMillis = System.currentTimeMillis() + _uiState.value.ttsState.sleepMinutes * 60_000L
             }
         }
+    }
+
+    /**
+     * 起一个朗读引擎。
+     *
+     * 设置里选了在线引擎但当前网络不允许（只在 Wi-Fi 下用），或者在线引擎起不来、读不出声音，
+     * 就退回手机内置的那个，至少书能读；一次朗读里只退一次，不再反复试。
+     */
+    private fun startTtsBackend(context: Context, generation: Int, config: TtsEngineConfig, note: String = "") {
+        val useOnline = config.engine != TtsEngine.BUILT_IN && TtsEngines.onlineAllowed(context, config)
+        val hint = when {
+            note.isNotBlank() -> note
+            config.engine != TtsEngine.BUILT_IN && !useOnline -> "当前网络不适合用在线朗读，先用手机内置的"
+            else -> ""
+        }
+        val listener = object : TtsListener {
+            override fun onSpeakStarted(utteranceId: String) {
+                if (ttsGeneration == generation) onTtsStart(utteranceId)
+            }
+
+            override fun onSpeakFinished(utteranceId: String) {
+                if (ttsGeneration == generation) onTtsDone(utteranceId)
+            }
+
+            override fun onSpeakFailed(message: String) {
+                if (ttsGeneration != generation) return
+                if (useOnline && !ttsFellBackToBuiltIn) {
+                    ttsFellBackToBuiltIn = true
+                    startTtsBackend(
+                        context,
+                        generation,
+                        config.copy(engine = TtsEngine.BUILT_IN),
+                        "在线朗读没读成功（$message），已改用系统朗读"
+                    )
+                } else {
+                    onTtsError(message)
+                }
+            }
+
+            override fun onAudioFocusLost() {
+                focusLossPause()
+            }
+
+            override fun onAudioFocusRegained() {
+                focusGainResume()
+            }
+        }
+        val backend = if (useOnline) HttpTtsBackend(context, config, listener) else SystemTtsBackend(context, listener)
+        ttsBackend?.release()
+        ttsBackend = backend
+        _uiState.update { state ->
+            state.copy(ttsState = state.ttsState.copy(
+                engineLabel = backend.engineLabel,
+                supportsPitch = backend.supportsPitch,
+                status = hint.ifBlank { state.ttsState.status }
+            ))
+        }
+        backend.start(
+            onReady = { voices ->
+                if (ttsGeneration != generation || ttsQueue.isEmpty()) return@start
+                _uiState.update { state ->
+                    state.copy(ttsState = state.ttsState.copy(
+                        isLoading = false,
+                        total = ttsQueue.size,
+                        voices = voices
+                    ))
+                }
+                speakCurrentTts()
+            },
+            onFailure = { message ->
+                if (ttsGeneration != generation) return@start
+                if (useOnline && !ttsFellBackToBuiltIn) {
+                    ttsFellBackToBuiltIn = true
+                    startTtsBackend(
+                        context,
+                        generation,
+                        config.copy(engine = TtsEngine.BUILT_IN),
+                        "在线朗读起不来（$message），已改用系统朗读"
+                    )
+                } else {
+                    onTtsError(message)
+                }
+            }
+        )
     }
 
     private fun speakCurrentTts() {
@@ -1337,10 +1417,17 @@ private suspend fun openReadiumSession(
             ReadiumUiEvents.emitTtsHighlight(sessionId, utterance.locatorJson)
         }
         val state = _uiState.value.ttsState
-        val ok = ttsController?.speak(utterance.text, utterance.id, state.speechRate, state.pitch, state.voiceName) == true
-        if (!ok) {
-            _uiState.update { it.copy(ttsState = it.ttsState.copy(status = "系统 TTS 未准备好，请稍后重试")) }
+        val started = ttsBackend?.speak(
+            utterance.text,
+            utterance.id,
+            TtsSpeechOptions(state.speechRate, state.pitch, state.voiceName)
+        ) == true
+        if (!started) {
+            _uiState.update { it.copy(ttsState = it.ttsState.copy(status = "朗读引擎没准备好，停止后再试一次")) }
+            return
         }
+        // 联网引擎取音频要花时间，提前把下一句交出去，听起来才不会每句中间都空一下。
+        ttsQueue.getOrNull(ttsIndex + 1)?.let { next -> ttsBackend?.preload(next.text, next.id) }
     }
 
     private fun onTtsStart(utteranceId: String) {
@@ -1394,7 +1481,8 @@ private suspend fun openReadiumSession(
     }
 
     override fun onCleared() {
-        ttsController?.shutdown()
+        ttsBackend?.release()
+        ttsBackend = null
         tempLocalFile?.let { runCatching { it.delete() } }
         super.onCleared()
     }

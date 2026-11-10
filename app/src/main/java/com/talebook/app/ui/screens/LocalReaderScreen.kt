@@ -1004,6 +1004,19 @@ fun LocalReaderScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Text(
+                                text = buildString {
+                                    append("朗读方式：")
+                                    append(uiState.ttsState.engineLabel.ifBlank { "正在准备…" })
+                                    if (uiState.ttsState.voiceName.isNotBlank()) {
+                                        append(" · ")
+                                        append(uiState.ttsState.voices.firstOrNull { voice -> voice.id == uiState.ttsState.voiceName }?.label
+                                            ?: uiState.ttsState.voiceName)
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                 Button(
                                     onClick = {
@@ -1041,27 +1054,30 @@ fun LocalReaderScreen(
                                 onValueChange = { viewModel.updateTtsRate(it) },
                                 valueRange = 0.5f..2.0f
                             )
-                            Text(
-                                text = "音调 ${String.format(java.util.Locale.US, "%.1f", uiState.ttsState.pitch)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            CompactSlider(
-                                value = uiState.ttsState.pitch,
-                                onValueChange = { viewModel.updateTtsPitch(it) },
-                                valueRange = 0.5f..2.0f
-                            )
+                            if (uiState.ttsState.supportsPitch) {
+                                Text(
+                                    text = "音调 ${String.format(java.util.Locale.US, "%.1f", uiState.ttsState.pitch)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                CompactSlider(
+                                    value = uiState.ttsState.pitch,
+                                    onValueChange = { viewModel.updateTtsPitch(it) },
+                                    valueRange = 0.5f..2.0f
+                                )
+                            }
                             Box {
                                 OutlinedButton(
                                     onClick = { voicesExpanded = true },
                                     modifier = Modifier.fillMaxWidth(),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
-                                    Text(uiState.ttsState.voiceName.ifBlank { "系统默认语音" }, maxLines = 1)
+                                    Text(uiState.ttsState.voices.firstOrNull { voice -> voice.id == uiState.ttsState.voiceName }?.label
+                                        ?: "引擎默认音色", maxLines = 1)
                                 }
                                 DropdownMenu(expanded = voicesExpanded, onDismissRequest = { voicesExpanded = false }) {
                                     DropdownMenuItem(
-                                        text = { Text("系统默认语音") },
+                                        text = { Text("引擎默认音色") },
                                         onClick = {
                                             viewModel.updateTtsVoice("")
                                             voicesExpanded = false
@@ -1069,9 +1085,9 @@ fun LocalReaderScreen(
                                     )
                                     uiState.ttsState.voices.forEach { voice ->
                                         DropdownMenuItem(
-                                            text = { Text(voice, maxLines = 1) },
+                                            text = { Text(voice.label, maxLines = 1) },
                                             onClick = {
-                                                viewModel.updateTtsVoice(voice)
+                                                viewModel.updateTtsVoice(voice.id)
                                                 voicesExpanded = false
                                             }
                                         )

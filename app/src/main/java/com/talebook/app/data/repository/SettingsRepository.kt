@@ -13,8 +13,11 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.talebook.app.data.api.RetrofitClient
 import com.talebook.app.reader.ReaderScrollTapSpeed
+import com.talebook.app.reader.tts.TtsEngine
+import com.talebook.app.reader.tts.TtsEngineConfig
 import com.talebook.app.ui.theme.ThemePresets
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.UUID
 
@@ -108,6 +111,11 @@ class SettingsRepository(private val context: Context) {
         private val TTS_VOICE_NAME_KEY = stringPreferencesKey("tts_voice_name")
         private val TTS_SLEEP_ENABLED_KEY = booleanPreferencesKey("tts_sleep_enabled")
         private val TTS_SLEEP_MINUTES_KEY = intPreferencesKey("tts_sleep_minutes")
+        private val TTS_ENGINE_KEY = stringPreferencesKey("tts_engine")
+        private val TTS_SERVICE_URL_KEY = stringPreferencesKey("tts_service_url")
+        private val TTS_SERVICE_KEY_KEY = stringPreferencesKey("tts_service_api_key")
+        private val TTS_SERVICE_MODEL_KEY = stringPreferencesKey("tts_service_model")
+        private val TTS_WIFI_ONLY_KEY = booleanPreferencesKey("tts_wifi_only")
         private val LIBRARY_SERVERS_KEY = stringPreferencesKey("library_servers_json")
         private val ACTIVE_LIBRARY_SERVER_ID_KEY = stringPreferencesKey("active_library_server_id")
         private val START_TAB_KEY = stringPreferencesKey("start_tab")
@@ -389,6 +397,69 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
 
     val ttsSleepMinutes: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[TTS_SLEEP_MINUTES_KEY] ?: 30
+    }
+
+    /** 用哪套朗读引擎（内置 / 在线接口）。 */
+    val ttsEngine: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[TTS_ENGINE_KEY] ?: TtsEngine.BUILT_IN.name
+    }
+
+    /** 在线朗读服务的地址，形如 https://…/v1。 */
+    val ttsServiceUrl: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[TTS_SERVICE_URL_KEY] ?: ""
+    }
+
+    /** 在线朗读服务的访问口令。 */
+    val ttsServiceApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[TTS_SERVICE_KEY_KEY] ?: ""
+    }
+
+    /** 在线朗读服务用的模型名。 */
+    val ttsServiceModel: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[TTS_SERVICE_MODEL_KEY] ?: ""
+    }
+
+    /** 只在 Wi-Fi 下用在线朗读，用移动数据时改回内置引擎。 */
+    val ttsWifiOnly: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[TTS_WIFI_ONLY_KEY] ?: true
+    }
+
+    /** 一次读出朗读引擎的全部设置，阅读器开始朗读时用。 */
+    suspend fun ttsEngineConfig(): TtsEngineConfig {
+        val prefs = context.dataStore.data.first()
+        return TtsEngineConfig(
+            engine = TtsEngine.fromName(prefs[TTS_ENGINE_KEY]),
+            baseUrl = prefs[TTS_SERVICE_URL_KEY] ?: "",
+            apiKey = prefs[TTS_SERVICE_KEY_KEY] ?: "",
+            model = prefs[TTS_SERVICE_MODEL_KEY] ?: "",
+            voice = prefs[TTS_VOICE_NAME_KEY] ?: "",
+            wifiOnly = prefs[TTS_WIFI_ONLY_KEY] ?: true
+        )
+    }
+
+    /**
+     * 保存朗读引擎的设置。
+     *
+     * 换引擎时把之前选的音色清掉：不同家的音色名互不相干，留着只会读错音色。
+     */
+    suspend fun saveTtsEngine(
+        engine: TtsEngine,
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        wifiOnly: Boolean,
+        previousEngine: TtsEngine? = null
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[TTS_ENGINE_KEY] = engine.name
+            prefs[TTS_SERVICE_URL_KEY] = baseUrl.trim()
+            prefs[TTS_SERVICE_KEY_KEY] = apiKey.trim()
+            prefs[TTS_SERVICE_MODEL_KEY] = model.trim()
+            prefs[TTS_WIFI_ONLY_KEY] = wifiOnly
+            if (previousEngine != null && previousEngine != engine) {
+                prefs.remove(TTS_VOICE_NAME_KEY)
+            }
+        }
     }
 
     suspend fun saveServerUrl(url: String) {
@@ -819,6 +890,17 @@ val isLoggedIn: Flow<Boolean> = context.dataStore.data.map { prefs ->
             prefs[TTS_VOICE_NAME_KEY] = voiceName
             prefs[TTS_SLEEP_ENABLED_KEY] = sleepEnabled
             prefs[TTS_SLEEP_MINUTES_KEY] = sleepMinutes.coerceIn(5, 180)
+        }
+    }
+
+    /** 只改音色；设置页和阅读器里的音色下拉都用这个。 */
+    suspend fun saveTtsVoice(voice: String) {
+        context.dataStore.edit { prefs ->
+            if (voice.isBlank()) {
+                prefs.remove(TTS_VOICE_NAME_KEY)
+            } else {
+                prefs[TTS_VOICE_NAME_KEY] = voice
+            }
         }
     }
 
