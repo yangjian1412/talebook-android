@@ -128,6 +128,7 @@ import com.talebook.app.data.local.RecentReadingEntity
 import com.talebook.app.reader.ReadiumUiEvents
 import com.talebook.app.reader.ReaderFontFamily
 import com.talebook.app.reader.ReaderTheme
+import com.talebook.app.reader.TwoPageSpread
 import com.talebook.app.data.local.ReaderAnnotationEntity
 import com.talebook.app.data.repository.SettingsRepository
 import com.talebook.app.ui.theme.ReaderThemePalette
@@ -1758,21 +1759,29 @@ if (showProgressJumpDialog) {
                         },
                         valueRange = 0f..2f
                     )
-                    val isLandscapeAdv = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    val wideEnoughAdv = TwoPageSpread.isAvailable(LocalConfiguration.current.screenWidthDp)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "横屏双页显示",
-                            color = if (isLandscapeAdv) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "宽屏双页显示",
+                                color = if (wideEnoughAdv) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                text = if (wideEnoughAdv) "一屏排两页；窄一点的屏（手机竖屏、折叠屏外屏）还是单页。"
+                                else "屏幕不够宽，现在只能是单页。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         CompactSwitch(
                             checked = readerSettings.twoPageMode,
-                            enabled = isLandscapeAdv,
+                            enabled = wideEnoughAdv,
                             onCheckedChange = {
-                                viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = readerSettings.brightness, scrollMode = false, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn, twoPageMode = it)
+                                viewModel.updateReaderSettings(fontScale = readerSettings.fontScale, lineHeight = readerSettings.lineHeight, brightness = readerSettings.brightness, scrollMode = readerSettings.scrollMode, useSystemBrightness = readerSettings.useSystemBrightness, theme = readerSettings.theme, tapPageTurn = readerSettings.tapPageTurn, twoPageMode = it)
                             }
                         )
                     }

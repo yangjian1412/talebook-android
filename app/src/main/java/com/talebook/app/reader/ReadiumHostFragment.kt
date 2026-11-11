@@ -60,6 +60,8 @@ private var lastChapterName: String = ""
     private var lastTwoPageActive: Boolean? = null
     private var lastAvoidLargePublisherFonts: Boolean? = null
     private var lastFontFamily: ReaderFontFamily? = null
+    private var surfaceListener: View.OnLayoutChangeListener? = null
+    private var surfaceRefreshJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val session = ReadiumSessionStore.get(sessionId)
@@ -132,6 +134,7 @@ private var lastChapterName: String = ""
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val session = ReadiumSessionStore.get(sessionId) ?: return
+        watchReadingSurface(view)
         if (savedInstanceState == null) {
             view.post {
                 if (!isAdded || childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) != null) return@post
@@ -326,6 +329,10 @@ private var lastChapterName: String = ""
     }
 
     override fun onDestroyView() {
+        surfaceListener?.let { old -> view?.removeOnLayoutChangeListener(old) }
+        surfaceListener = null
+        surfaceRefreshJob?.cancel()
+        surfaceRefreshJob = null
         showSystemBars()
         super.onDestroyView()
     }
@@ -346,6 +353,61 @@ private var lastChapterName: String = ""
             } catch (_: Exception) {
             }
         }
+    }
+
+    /**
+     * 折叠、展开、转屏都会把阅读面变成另一个宽度，宽度跨过 [TwoPageSpread.MIN_WIDTH_DP] 就重新决定要不要两栏。
+     *
+     * 只重做两栏这件事：其它参数没变，重发一遍 Readium 的参数会让整页闪一下。
+     */
+    private fun watchReadingSurface(view: View) {
+        if (surfaceListener != null) return
+        val listener = View.OnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            val width = right - left
+            val previousWidth = oldRight - oldLeft
+            if (width <= 0 || previousWidth <= 0 || width == previousWidth) return@OnLayoutChangeListener
+            if (isWideEnoughForTwoPage(width) == isWideEnoughForTwoPage(previousWidth)) return@OnLayoutChangeListener
+            refreshTwoPageAfterResize()
+        }
+        surfaceListener = listener
+        view.addOnLayoutChangeListener(listener)
+    }
+
+    private fun isWideEnoughForTwoPage(widthPx: Int): Boolean =
+        TwoPageSpread.isAvailable(TwoPageSpread.pxToDp(resources, widthPx))
+
+    /** 现在的阅读面有多宽（dp）：量出来的宽度优先，没量过就用系统报的。 */
+    private fun readingWidthDp(): Int {
+        val width = view?.width ?: 0
+        return if (width > 0) TwoPageSpread.pxToDp(resources, width) else TwoPageSpread.windowWidthDp(resources)
+    }
+
+    /** 宽度变了以后重新注入两栏的样式；等这一帧布局过去，不然量到的还是旧尺寸。 */
+    private fun refreshTwoPageAfterResize() {
+        surfaceRefreshJob?.cancel()
+        surfaceRefreshJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(300)
+            if (!isAdded) return@launch
+            val session = ReadiumSessionStore.get(sessionId) as? EpubReadiumSession ?: return@launch
+            val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? EpubNavigatorFragment ?: return@launch
+            injectBasicCss(
+                navigator,
+                session.displaySettings,
+                session.isRemote && session.hasLargeEmbeddedFonts && !session.displaySettings.forcePublisherFonts,
+                TwoPageSpread.isActive(session.displaySettings.twoPageMode, readingWidthDp())
+            )
+        }
+    }
+
+    /**
+     * 换了一个文档（翻章、重新载入）之前注过的样式都没了，下一次得重新注。
+     *
+     * 注入是先把旧的 style 删掉再加，重复注一次没有副作用。
+     */
+    private fun forgetInjectedStyles() {
+        lastTwoPageActive = null
+        lastAvoidLargePublisherFonts = null
+        lastFontFamily = null
     }
 
     override fun onResourceLoadFailed(url: Url, error: ReadError) {
@@ -371,9 +433,10 @@ private var lastChapterName: String = ""
         val session = ReadiumSessionStore.get(sessionId) ?: return
         val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
         if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
+            // 文档换了一份，注过的样式都不在了：先清掉「已经注过」的记录，下面才会真的再注一遍。
+            forgetInjectedStyles()
             val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !session.displaySettings.forcePublisherFonts
-            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            val twoPageActive = session.displaySettings.twoPageMode && isLandscape
+            val twoPageActive = TwoPageSpread.isActive(session.displaySettings.twoPageMode, readingWidthDp())
             injectBasicCss(navigator, session.displaySettings, avoidLargePublisherFonts, twoPageActive)
             injectCustomFontCss(navigator, session.displaySettings)
             injectBackgroundImageCss(navigator, session.displaySettings)
@@ -823,8 +886,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
                 ReaderFontFamily.MONOSPACE -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE
                 ReaderFontFamily.CUSTOM -> null
             }
-            val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            val twoPageActive = settings.twoPageMode && isLandscape
+            val twoPageActive = TwoPageSpread.isActive(settings.twoPageMode, readingWidthDp())
             val imagePreset = isImagePresetForSettings(settings)
             navigator.submitPreferences(
                 EpubPreferences(
@@ -896,6 +958,8 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
     }
 
     private fun injectBasicCss(navigator: EpubNavigatorFragment, settings: ReaderDisplaySettings, avoidLargePublisherFonts: Boolean, twoPageActive: Boolean) {
+        // 两栏从开到关、或者从关到开，才要让 Readium 重新分页；之前那次是什么得先记下来，下面赋值就找不到了。
+        val wasTwoPageActive = lastTwoPageActive
         val customCssChanged = lastTwoPageActive != twoPageActive ||
             lastAvoidLargePublisherFonts != avoidLargePublisherFonts ||
             lastFontFamily != settings.fontFamily
@@ -916,7 +980,8 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         }
         val vPad = String.format(java.util.Locale.US, "%.2f", settings.pageMarginVertical)
         injectPagePadding(navigator, "${vPad}rem")
-        if (twoPageActive != (lastTwoPageActive ?: twoPageActive)) {
+        if (wasTwoPageActive != null && wasTwoPageActive != twoPageActive) {
+            // 一栏变两栏（或反过来）以后页的位置全变了，让 Readium 按原来的位置重新分一次页。
             val beforeLocator = navigator.currentLocator.value
             viewLifecycleOwner.lifecycleScope.launch {
                 delay(150)
@@ -962,8 +1027,14 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         val escaped = css.replace("'", "\\'").replace("\n", " ")
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
+                // 文档刚开始解析的时候没有 head，等它建好再加（和 injectPagePadding 一样）。
                 navigator.evaluateJavascript(
-                    "(function() { var old = document.getElementById('$id'); if (old) old.remove(); var s = document.createElement('style'); s.id = '$id'; s.type = 'text/css'; s.innerHTML = '$escaped'; (document.head || document.documentElement).appendChild(s); })();"
+                    "(function() {" +
+                        "function add() { var old = document.getElementById('$id'); if (old) old.remove(); " +
+                        "var s = document.createElement('style'); s.id = '$id'; s.type = 'text/css'; s.innerHTML = '$escaped'; (document.head || document.documentElement).appendChild(s); }" +
+                        "if (document.head || document.body) { add(); return; }" +
+                        "document.addEventListener('DOMContentLoaded', function once() { add(); document.removeEventListener('DOMContentLoaded', once); });" +
+                        "})();"
                 )
             }.onFailure { error ->
                 Log.w("TaleReadium", "Custom CSS injection skipped: " + error.message)

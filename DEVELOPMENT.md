@@ -479,6 +479,14 @@ EPUB 使用 `EpubPreferences` 实时应用：
 
 PDF 当前支持打开、进度保存、书签、当前位置笔记、反 L 点击翻页、音量键翻页、百分比/页码跳转。PDF 搜索、PDF 选区笔记、适应宽度/页面等仍需要继续专项验证。
 
+「宽屏双页显示」（EPUB 双列）：
+
+- 判断只看阅读面宽度，不看方向、也不看设备类型：`reader/TwoPageSpread.kt` 里 `MIN_WIDTH_DP = 650`，即一栏 325dp 上下才排两栏。直板手机竖屏（约 410dp）、折叠屏外屏（约 425dp）、内屏窄的那档折叠屏（600dp 上下，比如小米 18 Fold 展开竖屏是 608dp）都不开；手机横屏、平板、内屏更宽的才开。
+- 实现是往 WebView 注样式：`ReadiumHostFragment.injectBasicCss()` 在 `talebook-reader-custom-css` 里加 `body { -webkit-column-count: 2 … }`，不经过 `EpubPreferences`（Readium 没有这个参数）。
+- 触发点：`applyReaderSettings`（改设置）、`onPageLoaded`（换文档，注过的样式会没，先 `forgetInjectedStyles()` 再重注）、`view` 的 `OnLayoutChangeListener`（折叠/展开/转屏把宽度跨过门槛时，去抖 300ms 后只重做两栏这件事，不重发 `EpubPreferences`）。宽度用 `view.width` 换算成 dp，没布局过时退回 `Configuration.screenWidthDp`。
+- 两栏状态真的翻转时才 `navigator.go(当前 Locator)` 让 Readium 按原位置重新分页；第一次注入（之前没有状态）不触发。
+- 界面上开关的 `enabled` 用同一个 `TwoPageSpread.isAvailable(widthDp)`，两边条件必须一致。
+
 ## TTS（朗读）
 
 相关文件：

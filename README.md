@@ -2,11 +2,17 @@
 
 本项目基于 [Apache License 2.0](LICENSE) 开源。
 
-> 当前版本：`3.4.3`
+> 当前版本：`3.4.3v2`
 >
 > Talebook Android 是 [talebook](https://github.com/talebook/talebook) 服务端的第三方 Android 阅读客户端。项目定位是：**App 负责阅读体验，talebook 服务器只负责存书、登录和提供书籍资源。**
 
 [![GitHub Repo](https://img.shields.io/badge/GitHub-仓库-blue?logo=github)](https://github.com/yangjian1412/talebook-android)
+
+### 3.4.3v2 更新日志
+
+- 双页显示改成按阅读面宽度判断（改名「宽屏双页显示」）：只要宽度够（650dp 以上，平板、手机横屏、内屏够宽的折叠屏）就排两页，与横竖屏无关；手机竖屏、折叠屏外屏仍是单页。
+- 折叠 / 展开 / 转屏时自动跟着切换，不需要再翻一次开关或转一下方向；首次打开书籍也按当时的宽度排。
+- 开双页不会再顺手关闭「滚动翻页」；「关于」里的版本号改为读取安装包，不再写死。
 
 ### 3.4.3 更新日志
 
