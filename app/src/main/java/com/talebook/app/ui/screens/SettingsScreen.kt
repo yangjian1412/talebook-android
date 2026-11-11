@@ -1,5 +1,6 @@
 package com.talebook.app.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -103,6 +104,7 @@ fun SettingsScreen(
     val cacheLimitMb by settingsRepository.readerCacheLimitMb.collectAsState(initial = SettingsRepository.DEFAULT_CACHE_LIMIT_MB)
     val autoCacheOnWifi by settingsRepository.readerAutoCacheOnWifi.collectAsState(initial = false)
     val context = LocalContext.current
+    val appVersionName = remember(context) { installedVersionName(context) }
     var showChangelog by remember { mutableStateOf(false) }
     var editCacheLimit by remember(cacheLimitMb) { mutableStateOf(cacheLimitMb.toString()) }
     var cacheMessage by remember { mutableStateOf<String?>(null) }
@@ -715,7 +717,7 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Tale Book v3.4.2",
+                text = if (appVersionName.isBlank()) "Tale Book" else "Tale Book v$appVersionName",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -794,6 +796,15 @@ fun SettingsScreen(
         ChangelogDialog(onDismiss = { showChangelog = false })
     }
 }
+
+/**
+ * 这台机器上装的版本号。
+ *
+ * 读安装包自己的 versionName，不写在代码里，省得每次发版都要记得改这一处。
+ */
+private fun installedVersionName(context: Context): String = runCatching {
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName
+}.getOrNull().orEmpty()
 
 @Composable
 private fun ReaderOptionRow(
@@ -907,14 +918,6 @@ private fun TtsSettingsSection(settingsRepository: SettingsRepository) {
         Spacer(modifier = Modifier.width(6.dp))
         Text("添加朗读服务")
     }
-    Spacer(modifier = Modifier.height(8.dp))
-    Text(
-        text = "上面两套是现成的：手机内置的不联网、也没有次数限制；Edge 是微软的在线语音，免费、不用配，" +
-            "点它就换过去了（点右边的笔只能改它用的音色）。自己家的服务、小米 MiMo 用「添加朗读服务」加，" +
-            "加几套都行，在这里选现在用哪一套。",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
     Spacer(modifier = Modifier.height(12.dp))
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1170,9 +1173,7 @@ private fun TtsServiceEditDialog(
             ) {
                 if (service.isEdge) {
                     Text(
-                        text = "微软 Edge 的在线语音：免费、不用填地址和 Key，这里只能挑用哪个音色。" +
-                            "打开就已经把微软的音色列表读好了（中文的排在前面），选一个就行，也可以自己填；" +
-                            "不确定就先点「试听」。",
+                        text = "微软 Edge 的在线语音：免费、不用填地址和 Key，这里只挑用哪个音色。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
