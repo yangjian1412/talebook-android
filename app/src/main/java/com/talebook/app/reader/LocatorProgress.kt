@@ -68,4 +68,28 @@ object LocatorProgress {
 
     fun withTotalProgression(locator: Locator, total: Double): Locator =
         locator.copy(locations = locator.locations.copy(totalProgression = total.coerceIn(0.0, 1.0)))
+
+    /**
+     * 给 locator 补上「在这一章的第几页」，算法就是 Readium 兜底公式的反函数。
+     *
+     * 外排（reflowable）的 EPUB 里，Readium 上报的定位只有 `locations.cssSelector`，
+     * 而它恢复位置时不看 cssSelector：要么用 URL 片段里的 id（`document.getElementById()`），
+     * 要么退回 `R2EpubPageFragment` 的 `item = (progression * numPages).roundToInt()`。
+     * 我们知道第几页，补上去以后那条兜底就会落在同一页，而不是章节第一页。
+     */
+    fun withResourceProgression(locator: Locator, pageIndex: Int, totalPages: Int): Locator {
+        if (totalPages <= 1) return locator
+        val progression = (pageIndex.toDouble() / totalPages.toDouble()).coerceIn(0.0, 1.0)
+        return locator.copy(locations = locator.locations.copy(progression = progression))
+    }
+
+    /** 除了「在哪一章」以外还知不知道在这章的哪儿：段内进度，或者 URL 片段里的元素 id。 */
+    fun hasPositionInResource(locator: Locator): Boolean {
+        locator.locations.progression?.let { if (it > 0.0) return true }
+        // Readium 恢复位置只认两条（见 `R2EpubPageFragment.loadLocator`）：
+        // `locations.htmlId` → `document.getElementById()`，那条 id 是从 URL 片段（`#id`）里取的，
+        // 跟 `cssSelector` 没关系；再就是按段内 `progression` 折算成第几页。
+        if (locator.locations.fragments.any { it.startsWith("#") && it.length > 1 && !it.contains("=") }) return true
+        return false
+    }
 }

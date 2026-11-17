@@ -473,13 +473,11 @@ fun LocalReaderScreen(
 
     LaunchedEffect(uiState.sessionId) {
         val sessionId = uiState.sessionId ?: return@LaunchedEffect
-        ReadiumUiEvents.centerTaps.collect { (tappedSessionId, locatorJson) ->
+        ReadiumUiEvents.centerTaps.collect { (tappedSessionId, _) ->
             if (tappedSessionId == sessionId) {
-                val wasVisible = barsVisible
+                // 菜单是盖在阅读面上的覆盖层，阅读面大小不随菜单变，所以这里只需要切显隐，
+                // 不需要再跳一次位置（以前会 emitGoToLocator 跳回去，跳不好就落到章节开头）。
                 ReaderBarsController.toggle()
-                if (wasVisible && !uiState.format.equals("pdf", ignoreCase = true)) {
-                    ReadiumUiEvents.emitGoToLocator(sessionId, locatorJson)
-                }
             }
         }
     }

@@ -47,6 +47,7 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.html.cssSelector
 import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.util.AbsoluteUrl
 import org.readium.r2.shared.util.Url
@@ -69,6 +70,10 @@ private var lastChapterName: String = ""
             super.onCreate(savedInstanceState)
             requireActivity().onBackPressedDispatcher.onBackPressed()
             return
+        }
+
+        if (DEBUG_POSITION) {
+            Log.d(POSITION_TAG, "host fragment onCreate sessionId=$sessionId jumpTo=${arguments?.getString(ARG_JUMP_TO) != null} savedInstanceState=${savedInstanceState != null}")
         }
 
         val jumpLocator = arguments?.getString(ARG_JUMP_TO)?.let { json ->
@@ -180,7 +185,7 @@ private var lastChapterName: String = ""
                 val centerX = x > viewWidth * 0.25f && x < viewWidth * 0.75f
                 val centerY = y > viewHeight * 0.33f && y < viewHeight * 0.67f
                 return if (centerX && centerY) {
-                    ReadiumUiEvents.emitCenterTap(sessionId, navigator.currentLocator.value.toJSON().toString())
+                    ReadiumUiEvents.emitCenterTap(sessionId, bestKnownLocator(navigator.currentLocator.value).toJSON().toString())
                     true
                 } else if (session.displaySettings.tapPageTurn) {
                     ReaderBarsController.hide()
@@ -225,8 +230,9 @@ private var lastChapterName: String = ""
             viewLifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                 navigator.currentLocator
                     .onEach { locator ->
-                        saveProgress(session.bookId, locator)
-                        emitChapterPath(session, locator)
+                        val known = bestKnownLocator(locator)
+                        saveProgress(session.bookId, known)
+                        emitChapterPath(session, known)
                     }
                     .launchIn(this)
                 ReadiumUiEvents.addBookmarks
@@ -242,9 +248,10 @@ private var lastChapterName: String = ""
                 ReadiumUiEvents.goToLocators
                     .onEach { (targetSessionId, locatorJson) ->
                         if (targetSessionId == sessionId) {
+                            clearPositionProtection()
                             runCatching { Locator.fromJSON(JSONObject(locatorJson)) }
                                 .getOrNull()
-                                ?.let { locator -> navigator.go(locator) }
+                                ?.let { locator -> navigator.go(bestKnownLocator(locator)) }
                         }
                     }
                     .launchIn(this)
@@ -329,6 +336,7 @@ private var lastChapterName: String = ""
     }
 
     override fun onDestroyView() {
+        if (DEBUG_POSITION) Log.d(POSITION_TAG, "host fragment onDestroyView sessionId=$sessionId")
         surfaceListener?.let { old -> view?.removeOnLayoutChangeListener(old) }
         surfaceListener = null
         surfaceRefreshJob?.cancel()
@@ -343,6 +351,7 @@ private var lastChapterName: String = ""
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (DEBUG_POSITION) Log.d(POSITION_TAG, "onConfigurationChanged orientation=${newConfig.orientation} w=${newConfig.screenWidthDp}dp h=${newConfig.screenHeightDp}dp")
         val currentView = view ?: return
         val session = ReadiumSessionStore.get(sessionId) ?: return
         currentView.post {
@@ -362,7 +371,16 @@ private var lastChapterName: String = ""
      */
     private fun watchReadingSurface(view: View) {
         if (surfaceListener != null) return
-        val listener = View.OnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+        val listener = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (DEBUG_POSITION) {
+                val width = right - left
+                val height = bottom - top
+                val oldWidth = oldRight - oldLeft
+                val oldHeight = oldBottom - oldTop
+                if (width != oldWidth || height != oldHeight) {
+                    Log.d(POSITION_TAG, "reading surface size ${oldWidth}x$oldHeight -> ${width}x$height")
+                }
+            }
             val width = right - left
             val previousWidth = oldRight - oldLeft
             if (width <= 0 || previousWidth <= 0 || width == previousWidth) return@OnLayoutChangeListener
@@ -426,11 +444,119 @@ private var lastChapterName: String = ""
 
     override fun onPageChanged(pageIndex: Int, totalPages: Int, locator: Locator) {
         val session = ReadiumSessionStore.get(sessionId) ?: return
+        if (DEBUG_POSITION) {
+            Log.d(
+                POSITION_TAG,
+                "pageChanged $pageIndex/$totalPages href=${locator.href} " +
+                    "progression=${locator.locations.progression} total=${locator.locations.totalProgression} " +
+                    "css=${locator.locations.cssSelector}"
+            )
+        }
+        // 这里知道第几页，顺手把段内进度补上：外排的 EPUB 里这是 Readium 唯一能用的段内位置。
+        lastKnownLocator = LocatorProgress.withResourceProgression(locator, pageIndex, totalPages)
+        hideBarsOnRealPageTurn(locator, pageIndex)
+        restoreIfKnockedBackToStart(locator, pageIndex, totalPages)
         emitChapterPath(session, locator)
+    }
+
+    /** 上一次上报的是哪一页，用来分清「真的翻了页」和「同一页重复上报」。 */
+    private var lastReportedPageKey: String? = null
+
+    /**
+     * 翻到另一页就把呼出的菜单收起来。
+     * 以前是靠保存进度时顺带发出的 progress 事件去收的，那条链一旦没有位置上报就收不起来，
+     * 这里在确实翻页的时候自己收一次。
+     */
+    private fun hideBarsOnRealPageTurn(locator: Locator, pageIndex: Int) {
+        val pageKey = "${locator.href}#$pageIndex"
+        val previous = lastReportedPageKey
+        lastReportedPageKey = pageKey
+        if (previous != null && previous != pageKey) {
+            ReaderBarsController.hide()
+        }
+    }
+
+    /**
+     * 我们记下的最近一份「位置完整」的 locator（带段内进度）。
+     *
+     * Readium 上报的定位只有 `locations.cssSelector`，而它恢复位置时根本不看 cssSelector：
+     * 要么是 URL 片段里的 id（`document.getElementById()`），要么是
+     * `R2EpubPageFragment` 里的 `item = (progression × numPages).roundToInt()`。
+     * 段内进度它不给，所以不补的话每次都会落到该文件的第一页。
+     */
+    private var lastKnownLocator: Locator? = null
+
+    /**
+     * 重发 Readium 参数（改字号、页边距、行距、主题……）会让整页重新分页，
+     * 重新分页以后如果落在章节开头而我们原来不在那儿，就按记下的位置回位。
+     */
+    private var protectedPosition: Locator? = null
+    private var protectedUntilMs: Long = 0L
+
+    /** 只在真的会重新分页的地方调用：先把现在的位置记下来。 */
+    private fun protectReadingPosition(navigator: Navigator) {
+        val current = bestKnownLocator(navigator.currentLocator.value)
+        val within = current.locations.progression ?: 0.0
+        if (within <= MIN_PROGRESS_TO_PROTECT || current.href.toString().isBlank()) {
+            clearPositionProtection()
+            return
+        }
+        protectedPosition = current
+        protectedUntilMs = System.currentTimeMillis() + PROTECT_POSITION_WINDOW_MS
+    }
+
+    private fun restoreIfKnockedBackToStart(reported: Locator, pageIndex: Int, totalPages: Int) {
+        val target = protectedPosition ?: return
+        if (System.currentTimeMillis() > protectedUntilMs) {
+            clearPositionProtection()
+            return
+        }
+        if (!LocatorProgress.hrefMatches(target.href.toString(), reported.href.toString())) {
+            // 已经翻到别的文件了，不是我们要护的那一次。
+            clearPositionProtection()
+            return
+        }
+        // 重新分页之后的第一次上报就把这个保护用掉：只有落在第一页、而这一章本来不止一页，才叫被顶回了开头。
+        clearPositionProtection()
+        if (totalPages <= 1 || pageIndex > 0) return
+        val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
+        android.util.Log.d("TaleReadium", "Position knocked back to the first page, restoring: ${target.href}")
+        runCatching { navigator.go(target) }
+    }
+
+    private fun clearPositionProtection() {
+        protectedPosition = null
+        protectedUntilMs = 0L
+    }
+
+    /**
+     * 一份只说得出「在哪一章」的 locator，换成我们记下的那一份（同一个文件时才换）。
+     *
+     * 不换的后果是 Readium 只能按段内进度兜底，而段内进度是空的 → 落到章节第一页。
+     */
+    private fun bestKnownLocator(locator: Locator): Locator {
+        val remembered = lastKnownLocator ?: return locator
+        if (LocatorProgress.hasPositionInResource(locator)) return locator
+        val href = locator.href.toString()
+        if (href.isBlank()) return remembered
+        if (!LocatorProgress.hrefMatches(remembered.href.toString(), href)) return locator
+        return remembered
     }
 
     override fun onPageLoaded() {
         val session = ReadiumSessionStore.get(sessionId) ?: return
+        if (DEBUG_POSITION) {
+            val nav = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator
+            val current = nav?.currentLocator?.value
+            Log.d(
+                POSITION_TAG,
+                "pageLoaded initial=" + session.initialLocator?.let {
+                    "href=${it.href} progression=${it.locations.progression} total=${it.locations.totalProgression}"
+                } + " now=" + current?.let {
+                    "href=${it.href} progression=${it.locations.progression} total=${it.locations.totalProgression}"
+                }
+            )
+        }
         val navigator = childFragmentManager.findFragmentByTag(NAVIGATOR_TAG) as? Navigator ?: return
         if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
             // 文档换了一份，注过的样式都不在了：先清掉「已经注过」的记录，下面才会真的再注一遍。
@@ -607,16 +733,23 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         ?.trim()
         .orEmpty()
 
-    private fun goBackward(navigator: Navigator): Boolean = when (navigator) {
-        is EpubNavigatorFragment -> navigator.goBackward(true)
-        is PdfNavigatorFragment<*, *> -> navigator.goBackward(true)
-        else -> false
+    private fun goBackward(navigator: Navigator): Boolean {
+        // 自己翻的页，位置保护就作废：不然刚翻回章节开头会被我们抢回去。
+        clearPositionProtection()
+        return when (navigator) {
+            is EpubNavigatorFragment -> navigator.goBackward(true)
+            is PdfNavigatorFragment<*, *> -> navigator.goBackward(true)
+            else -> false
+        }
     }
 
-    private fun goForward(navigator: Navigator): Boolean = when (navigator) {
-        is EpubNavigatorFragment -> navigator.goForward(true)
-        is PdfNavigatorFragment<*, *> -> navigator.goForward(true)
-        else -> false
+    private fun goForward(navigator: Navigator): Boolean {
+        clearPositionProtection()
+        return when (navigator) {
+            is EpubNavigatorFragment -> navigator.goForward(true)
+            is PdfNavigatorFragment<*, *> -> navigator.goForward(true)
+            else -> false
+        }
     }
 
     private fun handlePageTurnTap(
@@ -863,6 +996,7 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
     }
 
     private fun applyReaderSettings(session: ReadiumSession, navigator: Navigator, settings: ReaderDisplaySettings) {
+        if (DEBUG_POSITION) Log.d(POSITION_TAG, "applyReaderSettings (会重发 Readium 参数)")
         val activeBg = resolveActiveBackground(settings.readerBackgroundColor, settings.appDark)
         val color = rgbToColor(activeBg)
         applyBackground(settings)
@@ -879,6 +1013,8 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         }
         if (session is EpubReadiumSession && navigator is EpubNavigatorFragment) {
             val avoidLargePublisherFonts = session.isRemote && session.hasLargeEmbeddedFonts && !settings.forcePublisherFonts
+            // submitPreferences 会让整页重新分页：先把位置记下来，被顶回章节开头时再回位。
+            protectReadingPosition(navigator)
             val readiumFontFamily = when (settings.fontFamily) {
                 ReaderFontFamily.DEFAULT -> if (avoidLargePublisherFonts) org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF else null
                 ReaderFontFamily.SERIF -> org.readium.r2.navigator.preferences.FontFamily.SERIF
@@ -1350,6 +1486,16 @@ private suspend fun saveProgress(bookId: Int, locator: Locator) {
         private const val ARG_SESSION_ID = "session_id"
         private const val ARG_JUMP_TO = "jump_to"
         private const val NAVIGATOR_TAG = "readium_navigator"
+
+        /** 段内进度不到这个数就算「本来就在章节开头」，不用护着。 */
+        private const val MIN_PROGRESS_TO_PROTECT = 0.05
+
+        /** 记下的位置最多护这么久，过了就丢掉。 */
+        private const val PROTECT_POSITION_WINDOW_MS = 5_000L
+
+        /** 定位问题的诊断日志（再查阅读位置时把它改成 true）。 */
+        private const val DEBUG_POSITION = false
+        private const val POSITION_TAG = "TalePos"
 
         fun newInstance(sessionId: Long, jumpTo: String? = null): ReadiumHostFragment = ReadiumHostFragment().apply {
             arguments = Bundle().apply {

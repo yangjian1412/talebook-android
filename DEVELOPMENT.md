@@ -395,6 +395,28 @@ app/src/main/java/com/talebook/app/
 
 注意：`Publication` 需要在会话移除时关闭。当前逻辑在宿主 Activity finishing 时移除会话。
 
+## 阅读位置与 Locator
+
+相关文件：`reader/LocatorProgress.kt`、`reader/ReadiumHostFragment.kt`
+
+外排（reflowable）EPUB 里，Readium 恢复阅读位置只认两条路（`R2EpubPageFragment.loadLocator`）：
+
+- `locations.htmlId` → `readium.scrollToId()` → 实际是 `document.getElementById()`。这个 id 是从 URL 片段（`#id`）里取的（`navigator/extensions/Locator.kt` 的 `htmlId`），**跟 `locations.cssSelector` 没有任何关系**；
+- 否则退到 `item = (locations.progression × numPages).roundToInt()`。
+
+`locations.cssSelector` 只是定位信息的一部分，翻页模式里其实没法用来定位。Readium 自己的 `currentLocator`（`EpubNavigatorFragment.notifyCurrentLocation()`）会带上从 WebView 问出来的段内 `progression`，再用 `publication.positionsByResource` 把 `cssSelector`/`totalProgression` 补进去。注意 `positionsByResource` 在 3.4.0 里不是挂起函数，它是 `runBlocking { publication.positions() }`（`navigator/extensions/Publication.kt`），也就是说这段计算是**站在界面线程上等的**；`EpubNavigatorFragment` 里的位置上报（`_currentLocator` 和 `paginationListener.onPageChanged`）全在它后面，所以它慢或者卡住的时候是一条上报都没有：进度不保存、呼出的菜单不随翻页收起、任何跳转只落到章节开头。位置表本身是按归档条目长度每 1024 字节一页算的（`streamer/parser/epub/EpubPositionsService`），不解析 HTML，本地书通常几十毫秒；远程流式的书要为每个 spine 文件取一次资源，就不好说了。两条路都拿不到时，`progression` 缺省是 0 → **落在该文件的第一页**。章节越长越明显。
+
+我们的处理：
+
+- 打开书的时候先 `warmUpPositions()`（`viewmodel/LocalReaderViewModel.kt`）：在 IO 线程上把 `publication.positionsByReadingOrder()` 算一遍（最多 10 秒，超时就先放开放书），Readium 会缓存这份结果，后面翻页、跳百分比时界面线程不用再等它。算不出来或者全是空列表会写一条 `TaleReadium` 警告日志。以前没有这一步的时候，症状是「点百分比跳转以后一切又正常了」—— 因为跳转那条路径在协程里调了 `publication.positions()`，顺手把它算好缓存了。
+- `onPageChanged(pageIndex, totalPages, locator)` 里知道第几页，用 `LocatorProgress.withResourceProgression()` 把段内 `progression = pageIndex / totalPages` 补上（正好是上面那条兜底公式的反函数），并存成 `lastKnownLocator`。有了这一份，`loadLocator` 那条兜底就能落在同一页。
+- 存进度（`saveProgress`）、中央点击带出去的 locator、`goToLocators` 收到的 locator，先过 `bestKnownLocator()`：目标只说得出「在哪一章」（`LocatorProgress.hasPositionInResource()` 为假）且指向同一个文件时，换成 `lastKnownLocator`。
+- `applyReaderSettings()` 会 `submitPreferences()`，等于强制重新分页；调用前 `protectReadingPosition()` 记下当前位置，重新分页后的第一次上报若落在第一章第一页（且该章不止一页、之前段内进度 > 5%）就 `go()` 回去。用户自己翻页（`goForward`/`goBackward`）或显式跳转（`goToLocators`）会清掉这个保护。
+- 顶栏/底栏是盖在阅读面上的 Compose 覆盖层，`AndroidView` 的 padding 不随菜单变化，所以显示/隐藏菜单不需要也不应该再跳一次位置（3.4.3v3 之前关菜单会 `emitGoToLocator()`，就是「关掉菜单回到本章第一页」的直接原因）。
+- 翻到下一页时收起菜单原先是靠 `saveProgress()` 顺带发出的 `progress` 事件驱动的，这条链一断（没有位置上报、或者存进度本身出错）就不收；`onPageChanged` 里加了 `hideBarsOnRealPageTurn()`：`href` 或者页码真的变了才 `ReaderBarsController.hide()`，同一页重复上报不收（否则刚呼出菜单就被自己收掉）。
+
+已知不足：搜索命中和朗读（TTS）的 locator 来自 `Publication.content()`/内容代理，只有 `cssSelector` 而没有段内 `progression`，所以落在当前章节内部时无法精确定位到那一句（现在的行为是保持在当前页，不再掉回章节开头）。要真正定位得给这些 locator 补上段内 `progression`：位置表现在打开书时就算好并缓存了（`warmUpPositions()`），所以缺的只是把 `cssSelector` 对应到该文件里的字符偏移、再按每页 1024 字节换算成 `progression`。
+
 ## 阅读器 UI 事件
 
 相关文件：`reader/ReadiumUiEvents.kt`

@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.readium.adapter.pdfium.navigator.PdfiumDefaults
 import org.readium.adapter.pdfium.navigator.PdfiumEngineProvider
@@ -56,6 +57,7 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.allAreHtml
 import org.readium.r2.shared.publication.services.positions
+import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.publication.services.content.Content
 import org.readium.r2.shared.publication.services.content.content
 import org.readium.r2.shared.util.ErrorException
@@ -68,6 +70,9 @@ import java.net.URI
 
 private const val LARGE_EMBEDDED_FONT_BYTES = 5L * 1024L * 1024L
 private const val LOCAL_RECENT_SERVER_ID = "local"
+
+/** 整本书的分页位置表最多算这么久，超时就先放开放书，后面交给 Readium 自己算。 */
+private const val POSITIONS_WARM_UP_TIMEOUT_MS = 10_000L
 
 data class LocalReaderUiState(
     val isLoading: Boolean = false,
@@ -729,6 +734,31 @@ pageMargins = settingsRepository.readerPageMargins.first(),
         return false
     }
 
+/**
+ * 提前把整本书的 positions() 算出来，Readium 会把它缓存住。
+ *
+ * Readium 只有拿到这份位置表以后才会上报阅读位置，而且它是站在主线程里
+ * `runBlocking { positions() }` 等的：文件多或者章节大的书（例如 epubmerge 的合并本）
+ * 一旦算得慢，主线程等在那里就没有位置上报 —— 进度不保存、呼出的菜单不随翻页收起、
+ * 跳转只落到章节开头。这里先在 IO 线程上算一遍，之后 Readium 直接用缓存。
+ */
+private suspend fun warmUpPositions(publication: Publication, bookId: Int) {
+    val startedAt = android.os.SystemClock.elapsedRealtime()
+    val outcome = runCatching {
+        withTimeoutOrNull(POSITIONS_WARM_UP_TIMEOUT_MS) {
+            withContext(Dispatchers.IO) { publication.positionsByReadingOrder() }
+        }
+    }
+    val groups = outcome.getOrNull()
+    if (groups == null || groups.all { it.isEmpty() }) {
+        android.util.Log.w(
+            "TaleReadium",
+            "positions unavailable book=$bookId took=${android.os.SystemClock.elapsedRealtime() - startedAt}ms " +
+                "groups=${groups?.size} timedOut=${outcome.isSuccess} error=${outcome.exceptionOrNull()}"
+        )
+    }
+}
+
 private suspend fun openReadiumSession(
         context: Context,
         bookId: Int,
@@ -759,6 +789,10 @@ private suspend fun openReadiumSession(
                 onSuccess = { it },
                 onFailure = { err -> throw ErrorException(err) }
             ) ?: error("Readium 无法解析书籍")
+            // Readium 要先算出整本书的 positions() 才会上报阅读位置，而且是在主线程里 runBlocking 等它。
+            // 这里先把它算出来缓存好，别让它卡在翻页的时候：一卡住就没有位置上报，
+            // 表现是进度不保存、呼出的菜单不随翻页收起、跳转只落到章节开头。
+            warmUpPositions(publication, bookId)
             val progressRow = dao.getProgress(serverId, bookId)
             if (progressRow != null) {
                 val needsHeal = initialLocator == null ||
